@@ -1,0 +1,7 @@
+Putty, Ubuntu
+C:\Dev
+
+
+
+VMware workstation
+C:\ProgramData\Microsoft\Windows\Start Menu\Programs\VMware
