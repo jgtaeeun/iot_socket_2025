@@ -1,0 +1,45 @@
+0.헤더 파일	
+<arpa/inet.h>	inet_addr(), inet_ntoa(), inet_aton() 등 IP 주소 변환 함수들
+
+<netinet/in.h>	struct sockaddr_in, htons(), ntohl() 등 네트워크 구조체와 바이트 변환 함수
+
+<sys/socket.h>	socket(), connect() 등 소켓 함수
+
+<string.h>	memset() 등 사용 시 필요
+
+<stdlib.h>	atoi() 등 문자열 → 숫자 변환 함수
+
+
+<fcntl.h>  파일 open()
+<unistd.h> 파일 close()
+
+1. 문자열 처리
+#include <arpa/inet.h>
+inet_addr() 문자열 ->IPv4주소
+inet_aton() 문자열 ->struct in_addr
+
+
+2. 리틀엔디안, 빅엔디안
+#include <arpa/inet.h>
+htons() 16비트 정수 (uint16_t)->	16비트 정수 (uint16_t)
+htonl() 32비트 정수 (uint32_t)->32비트 정수 (uint32_t)
+
+3. 타입정의
+sa_family_t		unsigned short
+in_addr_t		uint32_t
+in_port_t		uint16_t
+
+4. 구조체
+#include <netinet/in.h>
+struct in_addr
+{
+            in_addr_t   s_addr;
+}
+
+
+struct sockaddr_in {
+            sa_family_t    sin_family; // AF_INET
+            in_port_t       sin_port;   // 포트 번호 
+            struct  in_addr  sin_addr;   // IPv4 주소
+            unsigned  char  sin_zero[8]; // 구조체 크기 맞춤용 패딩
+        };
