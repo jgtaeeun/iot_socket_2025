@@ -1,5 +1,5 @@
 # iot_socket_2025
-## vmware, putty 시작하기
+###  vmware, putty 시작하기
 - vm workstation - restart guest
 - putty configuration - ubuntu load(ip - 192.168.74.128)
 - id - reed
@@ -7,7 +7,7 @@
 - <img src='./images/putty와 vm ubuntu연결 22번 포트.png' width=500>
 
 ## 99일차(6/30)
-#### vmware, ubuntu, PuTTy 설치
+### vmware, ubuntu, PuTTy 설치
 - ubuntu 디스크이미지 파일 다운로드
     1. https://ubuntu.com/ 
     2. Download Ubuntu - Download Ubuntu Desktop -Ubuntu 24.04.2 LTS download
@@ -50,7 +50,7 @@
             - <img src='./images/putty로그인.png' width=500>
         
 
-#### 준비학습
+### TCP/IP 프로토콜 개요
 
 |호출순서|함수|
 |:--:|:--:|
@@ -62,7 +62,7 @@
 |종료|close()|
 
 
-#### 문법 with Putty  [./소켓/chapter1]
+#### 문법 with Putty   [./소켓/chapter1]
 1. gcc 컴파일러 
     - gcc 컴파일러 설치
         ```
@@ -284,7 +284,8 @@
 
     ```
 ## 100일차(7/1)
-#### 문법 with Putty  [./소켓/chapter2]
+### 소켓  [./소켓/chapter2]
+#### 바이트 정렬 함수 with Putty 
 - 문자열 정보 처리
     ```c
     #include <arpa/inet.h>
@@ -341,6 +342,7 @@
     |호스트 바이트 순서|0x100a8c0|inet_addr() 결과를 리틀엔디안으로 printf 해석|
     |네트워크 바이트 순서|0xC0A80001|실제 IP: 192.168.0.1 (정상적 변환 결과)|
 
+#### 소켓 개념, 특징, 구조 with Putty 
 - 구조체에서 사용되는 타입 정의(type definition)
 
 |타입 이름|실제 타입|의미|주로 쓰이는 곳|
@@ -427,6 +429,7 @@
         }
 
         ```
+### TCP 서버 클라이언트
 #### TCP 서버-클라이언트 프로그램의 기본 구조 with Putty [./소켓/chapter2/base_server.c] [./소켓/chapter2/base_client.c]
 - 서버에 있는 문자열을 클라이언트가 수신
 - 서버
@@ -676,7 +679,7 @@
         ```   
     5. close함수
 
-#### 클라이언트-서버 구조에서 양방향 통신
+#### 클라이언트-서버 구조에서 양방향 통신 - 에코서버, 에코 클라이언트
 - 전체 동작 흐름 요약
     1. 서버 실행
         - 서버는 지정된 포트에서 bind(), listen()을 통해 연결 대기
@@ -832,4 +835,637 @@
     - <img src='./images/tcp 클라이언트,서버 양방향통신.png' width=500>
     - <img src='./images/누적메시지 하려면.png' width=500>
 
-## 101일차(7/2)
+## 101일차(7/2)   [./소켓/chapter3] 
+### TCP, UDP 서버 클라이언트
+#### UDP  
+- 연결 설정을 하지 않으므로 connect()함수를 사용하지 않음
+- 프로토콜 수준에서 신뢰성 있는 데이터 전송을 보장하지 않음
+
+####  UDP 서버-클라이언트 분석
+- UDP 서버
+
+    |호출순서|함수|
+    |:--:|:--:|
+    |소켓생성|socket()|
+    |소켓주소할당|bind()|
+    |데이터수신|recvfrom()|
+    |데이터송신|sendto()|
+    |종료|close()|
+
+
+    
+- UDP 클라이언트
+
+    |호출순서|함수|
+    |:--:|:--:|
+    |소켓생성|socket()|
+    |데이터송신|sendto()|
+    |데이터수신|recvfrom()|
+    |종료|close()|
+
+- sendto함수
+    ```C
+    #include <sys/types.h>
+    #include <sys/socket.h>
+
+    ssize_t sento(
+        int sock,
+        void *buf,
+        size_t len,
+        int flags,
+        struct sockaddr * addr,
+        socklen_t addrlen
+
+    );
+    ```
+    - sock - 통신에 사용할 소켓
+    - buf - 보낼 데이터를 담고 있는 응용프로그램 버퍼의 주소
+    - len - 보낼 데이터 크기
+    - flags - 함수동작을 바꾸는 옵션, 대부분 0을 사용
+    - addr - 목적지 주소를 담고 있는 소켓 주소 구조체
+    - addrlen - 목적지 주소를 담고 있는 소켓 주소 구조체의 크기
+
+- recvfrom()
+    ```C
+    #include <sys/types.h>
+    #include <sys/socket.h>
+
+    ssize_t recvfrom(
+        int sock,
+        void *buf,
+        size_t len,
+        int flags,
+        struct sockaddr * addr,
+        socklen_t addrlen
+
+    );
+    ```
+    - sock - 통신에 사용할 소켓 , sendto()함수에 사용하는 소켓과 달리 이 소켓은 반드시 지역주소가 미리 결정되어 있어야 한다.
+    - buf - 받을 데이터를 저장할 응용프로그램 버퍼의 주소
+    - len - 받을 데이터 저장할 응용프로그램 크기, UDP 패킷 데이터가 len보다 크면 len만큼 복사하고 나머지는 버린다
+    - flags - 함수동작을 바꾸는 옵션, 대부분 0을 사용
+    - addr - 송신자 주소를 담고 있는 소켓 주소 구조체
+    - addrlen - 송신자 주소를 담고 있는 소켓 주소 구조체의 크기
+
+#### TCP의 ACK (Acknowledgment, 확인 응답) 통신 방식
+- TCP 통신에서는 데이터를 전송한 후, 수신자로부터 ACK 응답을 받아야 다음 데이터를 전송하거나 전송 성공을 확신할 수 있습니다.
+    - 송신자(Sender): 데이터를 전송하고, 수신자로부터 ACK를 기다림
+    - 수신자(Receiver): 데이터를 수신하면, 잘 받았다는 의미로 ACK 메시지를 송신자에게 전송
+
+
+- 서버와 클라이언트가 연결을 종료할 때는 "4-Way Handshake" 방식
+
+    |단계|방향|내용|
+    |:--:|:--:|:--:|
+    |1|Client → Server|FIN (연결 종료 요청)|
+    |2|Server → Client|ACK (FIN 확인)|
+    |3|Server → Client|FIN (서버도 종료 요청)|
+    |4|Client → Server|ACK (최종 확인)|
+
+-  ACK는 항상 상대방의 SEQ 번호에 +1을 해서 응답하는 게 기본 규칙
+    - <image src='./images/TCP ACK.png' width=500>
+
+
+#### half-close
+- close()함수의 호출은 상대방의 상태에 상관없이 완전 종료를 의미한다. 
+- TCP는 양방향 통신을 지원하므로, 한쪽 방향만 종료(FIN)하고 다른 방향은 계속 유지할 수 있습니다.
+- Half‑Close는 한쪽 방향(일반적으로 송신 방향)만 종료하고, 나머지 방향(주로 수신 방향)은 계속 유지하는 상태입니다.
+- 주로 shutdown(sock, SHUT_WR)를 호출하여 더 이상 보내지 않겠다는 신호(FIN)를 보냅니다.
+- 상대는 FIN을 수신하고 ACK 응답하며, 이후에도 데이터를 보낼 수 있습니다.
+- 이 상태에서는 내보내기는 안 되고, 수신은 계속 가능한 상태입니다.
+- <img src='./images/half close 이미지.webp' width=500>
+
+- shutdown함수
+    ```c
+    int shutdown(int sockfd, int how);
+    ```
+    - sockfd - 종료할 대상 소켓 디스크립터
+    - how - 종료 방향을 지정하는 상수 (SHUT_RD, SHUT_WR, SHUT_RDWR)
+
+        |매개변수|의미|
+        |:--:|:--:|
+        |SHUT_RD (0)|수신 종료 (더 이상 read()/recv() 불가)|
+        |SHUT_WR (1)|송신 종료 (더 이상 write()/send() 불가 → Half-Close)|
+        |SHUT_RDWR (2)|송수신 모두 종료 (양방향 종료)|
+
+    - 반환값: 성공 시 0, 실패 시 -1 (오류는 errno 설정됨)
+    - `shutdown() 호출 후에도 close()는 반드시 해줘야 커널 리소스를 완전히 해제합니다.`
+
+-  클라이언트가 서버에 접속해서 파일을 받고, 완료되면 메시지를 전송하는 구조 ( half-close )
+    1. 서버
+        - 코드 전체 개요
+            1. TCP 서버 소켓 생성 → 클라이언트 연결 대기
+            2. 자기자신인 file_server.c 파일을 바이너리 모드로 열어
+            3. 파일 내용을 30바이트씩 클라이언트로 전송
+            4. 파일 전송 완료 후 half-close (shutdown으로 송신 종료)
+            5. 클라이언트로부터 "Thank you" 메시지를 수신
+            6. 리소스 정리 후 종료
+
+        ```c
+        #include <stdio.h>
+        #include <string.h>
+        #include <unistd.h>
+        #include <stdlib.h>
+        #include <arpa/inet.h>
+        #include <sys/socket.h>
+
+
+        #define BUF_SIZE 30
+
+        int main(int argc, char** argv)
+        {
+                int serv_fd, clnt_fd;
+                FILE * fp;
+                char buf[BUF_SIZE];
+                int read_cnt;
+
+                struct sockaddr_in serv_addr, clnt_addr;
+                socklen_t clnt_addr_sz;
+
+                if (argc !=2)
+                {
+                        printf("%s <port>\n", argv[0]);
+                        exit(1);
+                }
+
+                fp = fopen("file_server.c","rb");
+
+                serv_fd = socket(PF_INET, SOCK_STREAM, 0);
+                memset(&serv_addr, 0, sizeof(serv_addr));
+                serv_addr.sin_family = AF_INET;
+                serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+                serv_addr.sin_port = htons(atoi(argv[1]));
+
+                bind(serv_fd, (struct sockaddr*) &serv_addr, sizeof(serv_addr));
+                listen(serv_fd, 5);
+
+                clnt_addr_sz= sizeof(clnt_addr);
+                clnt_fd = accept(serv_fd, (struct sockaddr*) &clnt_addr, &clnt_addr_sz);
+
+                while(1)
+                {
+                        read_cnt = fread((void*)buf, 1, BUF_SIZE, fp);
+                        if (read_cnt <BUF_SIZE)
+                        {
+                                write(clnt_fd, buf, read_cnt);
+                                break;
+                        }
+                        write(clnt_fd, buf, BUF_SIZE);
+                }
+
+                shutdown(clnt_fd, SHUT_WR);
+                read(clnt_fd, buf, BUF_SIZE);
+                printf("message from client: %s\n", buf);
+
+                fclose(fp);
+                close(clnt_fd);
+                close(serv_fd);
+                return 0;
+        }
+        ```
+
+    2. 클라이언트
+        - 코드 전체 개요
+            1. 서버에 연결함 (connect)
+            2. 서버로부터 file_server.c 파일 내용을 받음
+            3. 받은 내용을 receive.dat 파일로 저장
+            4. 수신이 끝나면 printf("Receive file data") 출력
+            5. 서버에게 "Thank you" 메시지를 보냄
+            6. 소켓 닫고 종료
+        ```c
+        #include <stdio.h>
+        #include <string.h>
+        #include <stdlib.h>
+        #include <unistd.h>
+        #include <arpa/inet.h>
+        #include <sys/socket.h>
+
+        #define  BUF_SIZE 30
+
+
+        int main(int argc, char** argv)
+
+        {
+
+                int serv_fd;
+                FILE* fp;
+                char buf[BUF_SIZE];
+                int read_cnt;
+                struct sockaddr_in serv_addr;
+
+                if (argc !=3 )
+                {
+                        printf("%s <IP> <PORT> \n", argv[0]);
+                        exit(1);
+                }
+
+                fp = fopen("receive.dat", "wb");
+                serv_fd = socket(PF_INET,SOCK_STREAM, 0);
+                memset(&serv_addr, 0, sizeof(serv_addr));
+                serv_addr.sin_family = AF_INET;
+                serv_addr.sin_addr.s_addr = inet_addr(argv[1]);
+                serv_addr.sin_port = htons( atoi(argv[2]));
+
+                connect(serv_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+
+                while((read_cnt = read(serv_fd, buf, BUF_SIZE))!=0)
+                {
+                        fwrite((void*)buf, 1, read_cnt, fp);
+                }
+
+                puts("Receive file data");
+                write(serv_fd, "Thank you" ,10);
+                fclose(fp);
+                close(serv_fd);
+                return 0;
+        }
+
+
+        ```
+
+    3. 실행
+        - <img src='./images/half close예시.png' width=500>
+
+#### DNS
+- 인터넷에서 도메인 이름(예: www.example.com)을 IP 주소(예: 192.0.2.1)로 변환해 주는 시스템
+
+- hosten 구조체
+    ```c
+    struct hostent{
+        char *h_name;               //공식도메인 이름
+        char **h_aliases;           //별명, 여러 별명 가진 경우 포인터를 따라가면 모든 별명 얻음
+        short h_addrtype;           //주소체계
+        short h_length;             //주소길이
+        char **h_addr_list;         //네트워크 바이트 정렬된 ip주소 , ip주소를 여러개 가진 경우, 이 포인터를 따라가면 모든 ip주소를 얻을 수 있다.
+    }
+    ```
+- 도메인 이름과 IP주소를 상호변환 하는 함수
+    ```C
+    #include <netdb.h>
+
+    /*도메인이름->ip주소*/
+    struct hostent *gethostbyname(
+        const char *name;
+    );
+
+    /*ip주소->도메인이름*/
+    struct hostent *gethostbyaddr(
+        const char *addr,
+        int len,
+        int type
+    );
+    ```
+
+- 도메인이름->ip주소(gethostbyname)
+    ```c
+
+    #include <stdio.h>
+    #include <unistd.h>
+    #include <arpa/inet.h>
+    #include <netdb.h>
+    #include <string.h>
+
+    int main(int argc, char** argv)
+    {
+            struct hostent* host;
+            struct in_addr addr32;
+            long int* addr;
+
+            host = gethostbyname(argv[1]);
+            if(host ==NULL)
+            {
+                    perror("error");
+                    exit(1);
+            }
+
+            printf("official name : %s\n", host->h_name);
+            printf("addrtype : %d\n", host->h_addrtype);
+
+            while(*host->h_addr_list !=NULL)
+            {
+                    addr =(long int*) *host->h_addr_list;
+                    addr32.s_addr = *addr;
+                    printf("IP addr : %s\n", inet_ntoa(addr32));
+                    host->h_addr_list++;
+            }
+
+            return 0;
+    }
+
+    ```
+    - <img src='./images/gethostbyname.png' width=500>
+- ip주소->도메인이름(gethostbyaddr)
+    ```c
+    
+    #include <stdio.h>
+    #include <unistd.h>
+    #include <arpa/inet.h>
+    #include <netdb.h>
+    #include <string.h>
+
+    void main(int argc, char** argv)
+    {
+            struct hostent* host;
+            struct sockaddr_in  addr;
+
+            memset(&addr, 0, sizeof(addr));
+            addr.sin_addr.s_addr =  inet_addr(argv[1]);
+            host = gethostbyaddr(&addr.sin_addr, sizeof(addr.sin_addr),AF_INET);
+
+            printf("Hostname : %s\n", host->h_name);
+
+
+    }
+
+    ```
+    - <img src='./images/gethostbyaddr.png' width=500>
+### 소켓옵션
+#### 소켓 옵션 설정
+- setsockopt()
+```c
+    #include <sys/types.h>
+    #include <sys/socket.h>
+
+    int setsockopt(
+        int sock,
+        int level,            //소켓레벨
+        int optname,        //설정할 옵션의 이름
+        const void *optval,   //설정할 옵션값 저장한 버퍼주소
+        socklen_t optlen     //optval이 가리키는 버퍼의 길이
+    );
+```
+- getsockopt()
+```c
+    #include <sys/types.h>
+    #include <sys/socket.h>
+
+    int getsockopt(
+        int sock,
+        int level,            //소켓레벨
+        int optname,        //설정할 옵션의 이름
+        void *optval,   //설정할 옵션값 저장한 버퍼주소
+        socklen_t* optlen     //optval이 가리키는 버퍼의 길이
+    );
+```
+#### 소켓 옵션의 종류
+
+|level|optname|get|set|설명|
+|:--:|:--:|:--:|:--:|:--:|
+|SOL_SOCKET|SO_KEEPALIVE|O|O|주기적으로 연결상태 확인 여부|
+|SOL_SOCKET|SO_REUSEADDR|O|O|지역주소 재사용 여부|
+|IPPROTO_TCP|TCP_NODELAY|O|O|Nagle알고리즘 비활성화 여부<br/>(기본값은 0;Nagle알고리즘 활성 상태)|
+
+
+- TCP 소켓의 송수신 버퍼 크기(SO_SNDBUF, SO_RCVBUF)를 조회하고, 수신 버퍼 크기를 변경하는 것
+    ```c
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <unistd.h>
+    #include <sys/socket.h>
+
+
+    int main()
+    {
+
+            int sock;
+            int sndbuf, rcvbuf;
+            socklen_t optlen;
+
+            sock = socket(PF_INET, SOCK_STREAM, 0);
+
+            optlen = sizeof(sndbuf);
+            if (getsockopt(sock, SOL_SOCKET, SO_SNDBUF, (void*)&sndbuf, &optlen)<0)
+                    perror("getsockopt failed");
+            printf("sendbuf size: %d\n", sndbuf);
+
+            optlen = sizeof(rcvbuf);
+            if (getsockopt(sock, SOL_SOCKET, SO_RCVBUF, (void*)&rcvbuf, &optlen)< 0 )
+                    perror("getsockopt failed");
+            printf("rcvbuf size : %d\n", rcvbuf);
+
+
+            /*setsockopt*/
+            rcvbuf = 8192;
+            if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf))<0)
+                    perror("setsocketopt failed");
+            printf("set rcvbuf size : %d\n", rcvbuf);
+            return 0;
+    }
+    ```
+- SO_REUSEADDR의 사용 예제
+    - [./소켓/chapter2]의 base_server을 2번째 실행할 때, 아래와 같은 에러가 발생한다.
+    - <img src='./images/socket재사용.png' width=500>
+    - 해결방법 - SO_REUSEADDR
+        ```C
+        //여기서 enable = 1은 옵션을 켜라(활성화해라) 는 뜻입니다.
+        //반대로 enable = 0을 넘기면 옵션을 끄는 것이 됩니다.
+        int enable = 1;  
+        setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+        if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1 )
+
+        ```
+    - SO_REUSEADDR의 역할
+        - TIME_WAIT 상태 중에도 동일한 포트를 재사용할 수 있도록 허용.
+        - 즉, bind() 호출이 실패하지 않고, 서버를 즉시 재시작할 수 있게 해줍니다.
+### 멀티프로세서 , 멀티프로세스
+- 멀티프로세서 - 컴퓨터 시스템에 여러 개의 CPU가 있는 구조
+- 멀티프로세스 - 하나의 프로그램이 여러 개의 프로세스로 동작 (ex. fork())
+- 멀티프로세서 시스템에서는 fork()로 만든 프로세스들이 서로 다른 CPU에서 동시에 실행될 수 있어요.
+
+#### fork
+- 현재 실행 중인 프로세스를 복사해서 새로운 프로세스(자식)를 생성합니다.
+- 이때 부모와 자식 프로세스는 거의 완전히 똑같은 메모리 상태로 실행을 시작합니다.
+- 단, 두 프로세스는 독립적으로 실행되며, 이후 각각 다른 행동을 할 수 있습니다.
+- `부모 프로세스에겐 자식의 PID가 리턴됨, 자식 프로세스에겐 0이 리턴됨`
+- 유닉스/Linux 계열에서 unistd.h에 정의됨
+
+```C
+#include <stdio.h>
+#include <unistd.h>
+int globalval = 10 ;
+
+int main()
+{
+        pid_t pid;
+        int localval = 20;
+
+        globalval++;   //11
+        localval +=5;   //25
+
+        pid = fork();            
+        if(pid==0)
+        {
+                globalval+=2;  //13
+                localval+=2;    //27
+        }
+        else
+        {
+                globalval-=2;    //9
+                localval -=2;    //23
+        }
+
+        if (pid==0)
+        {
+                printf("child proc[%d, %d]\n", globalval, localval);
+        }
+        else
+        {
+                printf("parent proc [%d, %d]\n", globalval, localval);
+        }
+
+        return 0;
+}
+
+```
+- <img src='./images/fork.png' width=500>
+- 부모가 먼저 보통 출력되는 이유
+    - <img src='./images/fork부모먼저인이유.png' width=500>
+#### 좀비 프로세스
+- 자식 프로세스가 exit()으로 종료는 되었지만, 부모 프로세스가 아직 그 종료 상태(exit status)를 회수하지 않은 상태에서
+커널에 프로세스 정보가 남아 있는 프로세스
+
+1. 좀비 프로세스 만들기 위한 코드
+
+
+    ```c
+
+    #include <stdio.h>
+    #include <unistd.h>
+
+    int main()
+    {
+
+            pid_t pid= fork();
+
+            if(pid ==0)
+            {
+                    puts("Hi , I'm Child process");
+            }
+            else
+            {
+                    printf("child process ID : %d\n", pid);
+                    sleep(30);   //부모는 30초 뒤에  puts("end parent process");을 하게 된다.
+            }
+
+            if (pid ==0)
+            {
+                    puts("end child process");
+            }
+            else
+            {
+                    puts("end parent process");
+            }
+            return 0;
+    }
+
+    ```
+2. 좀비 프로세스 확인하기 위한 코드
+    ```c
+    $ ps au
+
+    ```
+    - <img src='./images/좀비프로세스1.png' width=500>
+    - <img src='./images/좀비프로세스2.png' width=500>
+
+3. 좀비 프로세스 해결 방법: wait() ,waitpid(),sigaction(), signal
+    - waitpid()는 wait()보다 더 유연하게 동작합니다:
+    ```C
+    pid_t waitpid(pid_t pid, int *status, int options);
+    ```
+    |인자|설명|
+    |:--:|:--:|
+    |pid|어떤 자식을 기다릴지 지정 (특정 pid, -1이면 아무 자식이나)|
+    |status|자식 종료 상태를 저장할 변수|
+    |options|옵션 (0, WNOHANG 등)|
+
+4. waitpid()의 비동기(논블로킹) 대기  (1)
+
+|전체 흐름 설명|
+|:--:|
+|fork()로 자식 생성|
+|자식은 15초 후 return 24로 종료 (즉, exit(24)와 같음)|
+|부모는 waitpid()를 WNOHANG 옵션으로 호출해서 자식 종료 여부만 확인|
+|자식이 아직 안 죽었으면 → 0 반환|
+|자식이 죽었으면 → 자식 PID 반환|
+|자식이 종료되면 WIFEXITED(status) 확인 후, WEXITSTATUS(status)로 종료 코드 출력|
+
+```c
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+
+
+int main()
+
+
+{
+        pid_t pid =fork();
+        int status;
+
+        if (pid ==0)
+        {
+                sleep(15);
+                return 24;
+        }
+        else
+        {
+                //자식 프로세스가 아직 종료되지 않았으면 waitpid()는 0을 반환하고,
+                //부모는 3초 간격으로 "sleep 3sec"을 출력하면서 계속 자식의 종료를 비동기적으로 체크합니다.
+                while(!waitpid(-1 , &status, WNOHANG))   
+                {
+                        sleep(3);
+                        puts("sleep 3sec");
+                }
+                if(WIFEXITED(status))
+                {
+                        printf("child send %d\n", WEXITSTATUS(status));
+                }
+        }
+        return 0;
+
+}
+
+```
+- <img src='./images/waitid비동기.png' width=500>
+
+5. waitpid()의 비동기(논블로킹) 대기 (2)
+- fork()를 두 번 사용해서 두 개의 자식 프로세스를 만들고, wait()를 두 번 호출하여 두 자식 프로세스의 종료 상태를 확인하는 구조예요.
+
+```c
+#include <stdio.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <stdlib.h>
+
+int main() {
+    int status;
+    pid_t pid = fork();
+
+    if (pid == 0) return 3;              // 첫 번째 자식: return 3 → exit(3)
+    else {
+        printf("child pid: %d\n", pid);
+
+        pid = fork();                    // 두 번째 자식 생성
+        if (pid == 0) exit(7);           // 두 번째 자식: exit(7)
+        else {
+            printf("child pid : %d\n", pid);
+
+            wait(&status);               // 첫 번째 자식 or 두 번째 자식 기다림
+            if (WIFEXITED(status)) 
+                printf("child send one: %d\n", WEXITSTATUS(status));
+
+            wait(&status);               // 나머지 자식 기다림
+            if (WIFEXITED(status)) 
+                printf("child send two: %d\n", WEXITSTATUS(status));
+
+            sleep(30);                   // 부모는 30초 동안 살아 있음
+        }
+    }
+    return 0;
+}
+
+
+```
+- <img src='./images/wait두번.png' width=500>
+## 102일차(7/3) 

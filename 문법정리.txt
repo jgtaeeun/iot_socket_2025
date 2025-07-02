@@ -11,7 +11,11 @@
 
 
 <fcntl.h>  파일 open()
-<unistd.h> 파일 close()
+<unistd.h> 파일 close(), fork()
+<sys/wait.h>  좀비프로세스 해결책
+
+<netdb.h> 도메인 조회 관련 함수 (gethostbyaddr)
+
 
 1. 문자열 처리
 #include <arpa/inet.h>
