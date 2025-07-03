@@ -11,10 +11,16 @@
 
 
 <fcntl.h>  파일 open()
-<unistd.h> 파일 close(), fork()
+<unistd.h> 파일 close(), fork() ,sleep(), alarm() 함수 사용
+
 <sys/wait.h>  좀비프로세스 해결책
 
 <netdb.h> 도메인 조회 관련 함수 (gethostbyaddr)
+
+<stdio.h> puts() 함수 사용
+
+<signal.h> signal(), SIGALRM 관련 기능
+
 
 
 1. 문자열 처리

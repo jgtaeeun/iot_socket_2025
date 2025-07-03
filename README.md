@@ -1268,9 +1268,9 @@
         - TIME_WAIT 상태 중에도 동일한 포트를 재사용할 수 있도록 허용.
         - 즉, bind() 호출이 실패하지 않고, 서버를 즉시 재시작할 수 있게 해줍니다.
 ### 멀티프로세서 , 멀티프로세스
-- 멀티프로세서 - 컴퓨터 시스템에 여러 개의 CPU가 있는 구조
-- 멀티프로세스 - 하나의 프로그램이 여러 개의 프로세스로 동작 (ex. fork())
-- 멀티프로세서 시스템에서는 fork()로 만든 프로세스들이 서로 다른 CPU에서 동시에 실행될 수 있어요.
+- 멀티프로세서 - 컴퓨터 시스템에 여러 개의 CPU가 있는 구조 ,멀티프로세서 시스템에서는 fork()로 만든 프로세스들이 서로 다른 CPU에서 동시에 실행될 수 있어요.
+- 멀티프로세스 - 운영체제에서 여러 개의 프로세스를 동시에 실행하는 소프트웨어 개념
+
 
 #### fork
 - 현재 실행 중인 프로세스를 복사해서 새로운 프로세스(자식)를 생성합니다.
@@ -1469,3 +1469,764 @@ int main() {
 ```
 - <img src='./images/wait두번.png' width=500>
 ## 102일차(7/3) 
+### 멀티프로세서 , 멀티프로세스 [./소켓/chapter4]
+#### 좀비 프로세스
+- 좀비 프로세스 해결 방법: wait() ,waitpid(),sigaction(), signal
+6. signal() 함수
+- 부모 프로세스가 자식 프로세스의 종료를 감지하고 처리하도록 설정할 수 있습니다.
+- signal 함수 구조 분석
+    ```c
+    void (*signal(int signum, void (*handler)(int)))(int);
+    ```
+    - int signum - 감지할 시그널 번호 , 예: SIGINT, SIGCHLD, SIGKILL 등
+    - void (*handler)(int) - 시그널이 발생했을 때 실행될 콜백 함수 포인터입니다.
+- signal(), alarm(), 그리고 시그널 처리기를 사용하여 주기적으로 "timeout~" 메시지를 출력하는 간단한 예제
+```c
+#include <stdio.h>
+#include <unistd.h>
+#include <signal.h>
+
+
+void timeout(int sig)
+{
+        if (sig==SIGALRM) puts("timeout~");
+        alarm(2);
+}
+
+void main()
+{
+
+        signal(SIGALRM, timeout);
+        alarm(2);  //2초 뒤 SIGALRM발생
+
+        for (int i=0; i<5 ; i++)
+        {
+                puts("wait...");
+                sleep(100);
+        }
+}  
+```
+- <img src='./images/signal.png' width=500>
+
+- signal()은 "시그널 번호와 핸들러 함수"를 인자로 받고, 이전 핸들러 함수를 포인터로 반환하는 함수입니다.
+    ```c
+    #include <stdio.h>
+    #include <signal.h>
+
+    void handler1(int signo) {
+        printf("handler1: 시그널 %d 처리\n", signo);
+    }
+
+    void handler2(int signo) {
+        printf("handler2: 시그널 %d 처리\n", signo);
+    }
+
+    int main() {
+        // 처음으로 handler1을 등록
+        void (*old_handler)(int);
+        old_handler = signal(SIGINT, handler1);
+        
+        // 이때 old_handler는 이전 핸들러, 대부분 SIG_DFL (기본값)
+
+        // 다시 handler2로 덮어쓰기
+        void (*prev_handler)(int);
+        prev_handler = signal(SIGINT, handler2);
+
+        // 이때 prev_handler는 handler1을 가리킴
+        // 즉, 이전에 등록된 handler1 포인터가 반환된 것
+
+        return 0;
+    }
+
+    ```
+
+7. sigaction() 함수
+- 기본 사용법
+    ```c
+    #include <signal.h>
+
+    int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
+
+    ```
+    - signum - 설정할 시그널 번호 (SIGINT, SIGALRM, 등)
+    - act - 새로 설정할 동작 (핸들러 등 포함)
+    - oldact - 이전 시그널 동작 정보를 저장 (NULL이면 무시)
+- 구조체: struct sigaction
+    ```c
+    struct sigaction {
+    void (*sa_handler)(int);  // 시그널 핸들러 함수
+    sigset_t sa_mask;         // 시그널 처리 중 블록할 시그널들
+    int sa_flags;             // 동작 제어 옵션 (예: SA_RESTART 등)
+    };
+    ```
+#### pipe() 함수 
+- 데이터를 한 방향으로 전달하는 통신 채널(파이프)을 만드는 함수 
+- 함수원형
+    ```c
+    #include <unistd.h>
+    int pipe(int pipefd[2]);
+    ```
+    - pipefd[0]: 파이프의 읽기(read) 끝
+    - pipefd[1]: 파이프의 쓰기(write) 끝
+
+- 동작 원리
+    - pipe()를 호출하면 커널이 두 개의 연결된 파일 디스크립터를 만듭니다.
+    - 한쪽 끝(pipefd[1])에 데이터를 쓰면, 다른 쪽 끝(pipefd[0])에서 그 데이터를 읽을 수 있어요.
+    - `단방향 통신입니다. (읽기→쓰기 방향)`
+- pipe()와 fork()를 사용해서 부모 프로세스와 자식 프로세스 간에 메시지를 전달하는 간단한 예제(1)
+    ```c
+    #include <stdio.h>
+    #include <unistd.h>
+
+    int main()
+    {
+            int fds[2];
+            char str[] =  "Who are you?";
+            char buf[30];
+            pid_t pid;
+
+            pipe(fds);
+            pid = fork();
+
+            if (pid ==0 ) write(fds[1], str, sizeof(str));
+            else
+            {
+                    read(fds[0],buf, sizeof(buf));
+                    puts(buf);
+            }
+            return 0;
+    }
+
+    ```
+    - <img src='./images/pipe.png' width=500>
+    - <img src='./images/fork와 pipe.png' width=500>
+- pipe()와 fork()를 사용해서 부모 프로세스와 자식 프로세스 간에 메시지를 전달하는 pipe1개 사용하는 예제
+    ```c
+    #include <stdio.h>
+    #include <unistd.h>
+
+    int main()
+    {
+            int fds[2];
+            char str[] = "Who are you?";
+            char str2[] = "Thank you for your message";
+            char buf[50];
+            pid_t pid;
+
+            pipe(fds);
+            pid = fork();
+
+            if (pid ==0 )
+            {
+                    write(fds[1], str, sizeof(str));
+                    sleep(2);
+                    read(fds[0], buf, sizeof(buf));
+                    printf("child proc output :%s\n", buf);
+            }
+            else
+            {
+                    read(fds[0], buf, sizeof(buf));
+                    printf("parent proc output :%s\n", buf);
+                    write(fds[1], str2, sizeof(str2));
+                    sleep(3);
+            }
+            return 0;
+    }
+    ```
+    - <img src='./images/pipe2.png' width=500>
+    - <img src='./images/pipe 안의 데이터가 교체(덮어쓰기).png' width=500>
+
+- pipe()와 fork()를 사용해서 부모 프로세스와 자식 프로세스 간에 메시지를 전달하는 pipe2개 사용하는 예제
+    ```c
+    #include <stdio.h>
+    #include <unistd.h>
+
+    int main()
+    {
+            int fds[2], fds2[2];
+            char str[] = "Who are you?";
+            char str2[] = "Thank you";
+            char buf[30];
+            pid_t pid;
+
+            pipe(fds);
+            pipe(fds2);
+            pid = fork();
+
+            if(pid==0)
+            {
+                    write(fds[1], str, sizeof(str));
+                    read(fds2[0], buf, sizeof(buf));
+                    printf("child prc result : %s\n", buf);
+            }
+            else
+            {
+                    read(fds[0], buf, sizeof(buf));
+                    printf("parent prc result :%s\n", buf);
+                    write(fds2[1], str2, sizeof(str2));
+                    sleep(3);
+            }
+
+            return 0;
+    }
+    ```
+    - <img src='./images/pipe3.png' width=500>
+    - <img src='./images/pipe2그리고buf1.png' width=500>
+
+#### TCP 에코 서버 + 파일 기록
+- 전체 요약
+```
+[서버 시작]
+ ├─ pipe 생성
+ ├─ 기록용 자식 fork
+ ├─ sigaction 등록 (SIGCHLD → read_childproc)
+ ├─ 서버 소켓 열기
+ └─ 클라이언트 대기
+
+[클라이언트 접속 시]
+ ├─ 처리용 자식 fork
+ │   ├─ 클라이언트와 메시지 주고받기
+ │   └─ 메시지를 pipe로 기록용 자식에게 전달
+ └─ 부모는 클라이언트 소켓 닫고 다음 클라이언트 대기
+
+[기록용 자식]
+ └─ pipe에서 메시지 10개 수신 후 파일 저장 → 종료
+
+[자식 종료 시]
+ └─ SIGCHLD 발생 → 핸들러에서 waitpid()로 회수 → 좀비 제거
+```
+- 서버코드
+
+    |항목|설명|
+    |:--:|:--:|
+    |기록용 자식|메시지 10개 저장 후 종료. 그 뒤로는 echomsg.txt에 아무것도 기록 안 됨|
+    |부모 (서버 루프)|계속해서 클라이언트 받음. 계속 동작|
+    |처리용 자식|클라이언트 대응 후 종료.<br/>클라이언트로부터 메시지를 읽고, 그걸 다시 보내는 에코 서버 기능 수행<br/>동시에 해당 메시지를 pipe의 쓰기단 fds[1]에 기록|
+   
+    ```c
+
+    #include <stdio.h>
+    #include <unistd.h>
+    #include <string.h>
+    #include <stdlib.h>
+    #include <arpa/inet.h>
+    #include <signal.h>
+    #include <sys/wait.h>
+    #include <sys/socket.h>
+
+    #define BUF_SIZE 100
+
+    void read_childproc(int sig);
+
+    int main(int argc, char** argv)
+    {
+            int serv_sock, clnt_sock;
+            struct sockaddr_in serv_addr, clnt_addr;
+            int fds[2];
+
+            pid_t pid;
+            struct sigaction act;
+            socklen_t adr_sz;
+            int str_len, state;
+            char buf[BUF_SIZE];
+
+            if (argc !=2)
+            {
+                    printf("Usage: %s <port> \n", argv[0]);
+                    exit(1);
+            }
+
+            act.sa_handler= read_childproc;
+            act.sa_flags=0;
+            sigemptyset(&act.sa_mask);
+            state = sigaction(SIGCHLD, &act, 0);
+
+            serv_sock = socket(PF_INET, SOCK_STREAM, 0);
+            memset(&serv_addr, 0, sizeof(serv_addr));
+            serv_addr.sin_family = AF_INET;
+            serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+            serv_addr.sin_port = htons(atoi(argv[1]));
+
+            if(bind(serv_sock, (struct sockaddr*) &serv_addr, sizeof(serv_addr))==-1)
+            {
+                    perror("bind() error") ;
+                    close(serv_sock);
+                    exit(1);
+            }
+            if (listen(serv_sock, 5) == -1)
+            {
+                    perror("listen() error");
+                    close(serv_sock);
+                    exit(1);
+            }
+
+            pipe(fds);
+            pid =fork();
+
+            if(pid ==0 )
+            {       //메시지 기록전용 자식 프로세스
+                    FILE *fp = fopen("echomsg.txt", "wt");
+                    char msgbuf[BUF_SIZE];
+                    int i, len;
+                    for (i = 0 ; i<10 ; i++)
+                    {
+                            len = read(fds[0], msgbuf, BUF_SIZE);
+                            fwrite((void*)msgbuf, 1, len, fp);
+                    }
+                    fclose(fp);
+                    return 0;
+            }
+
+            while (1)
+            {
+
+                    adr_sz = sizeof(clnt_sock);
+                    clnt_sock = accept(serv_sock, (struct sockaddr*)&clnt_addr , &adr_sz);
+                    if (clnt_sock ==-1)
+                            continue;
+                    else
+                            puts("new clinent connected...");
+
+                    pid=fork();
+                    if(pid ==0)
+                    {
+
+                            close(serv_sock);
+                            while((str_len = read(clnt_sock, buf, BUF_SIZE)) >0)
+                            {
+                                    write(clnt_sock, buf, str_len);
+                                    write(fds[1], buf, str_len);
+                            }
+                            close(clnt_sock);
+                            puts("client disconnected...");
+                            return 0;
+                    }
+                    else
+
+                    {
+                            close(clnt_sock);
+                    }
+            }
+            close(serv_sock);
+            return 0;
+
+    }
+
+    void read_childproc(int sig)
+    {
+
+            pid_t pid;
+            int status;
+            pid = waitpid(-1, &status, WNOHANG);
+            printf("removed proc id : %d \n", pid);
+    }
+
+
+    ```
+- 서버 코드에서 처리용 자식 문제점
+    - for (i = 0; i < 10; i++)	메시지를 10개만 읽고 파일 기록 후 종료
+    - 기록용 자식이 종료되면 pipe의 읽기 단 fds[0]이 닫힘
+    - 그런데 처리용 자식은 계속 fds[1]에 write() 시도함
+    - pipe의 읽기 쪽이 모두 닫히면 write()는 SIGPIPE 시그널 발생 또는 write()가 -1 반환 (에러)
+    - 파이프에 쓰기는 실패하고, 더 이상 메시지는 기록되지 않음.심지어 처리용 자식이 비정상 종료될 수도 있음
+    - 해결책
+        ```c
+        // 잘못된: 10개만 읽음
+         pid =fork();
+
+        if(pid ==0 )
+        {   //메시지 기록전용 자식 프로세스
+            FILE *fp = fopen("echomsg.txt", "wt");
+            char msgbuf[BUF_SIZE];
+            int i, len;
+            for (i = 0 ; i<10 ; i++)
+            {
+                    len = read(fds[0], msgbuf, BUF_SIZE);
+                    fwrite((void*)msgbuf, 1, len, fp);
+            }
+            fclose(fp);
+            return 0;
+        }
+
+
+        // 올바른: 무한히 읽음
+        // 기록용 자식 프로세스 (무한히 기록)
+        pid = fork();
+        if (pid == 0) {
+            FILE *fp = fopen("echomsg.txt", "wt");
+            char msgbuf[BUF_SIZE];
+            int len;
+
+            while (1) {
+                len = read(fds[0], msgbuf, BUF_SIZE);
+                if (len <= 0)
+                    break;
+                fwrite(msgbuf, 1, len, fp);
+                fflush(fp); // 바로 기록
+            }
+
+            fclose(fp);
+            return 0;
+        }
+
+        ```
+
+### IO 멀티 플렉싱
+- 멀티프로세서 단점
+    - 프로세서의 빈번한 생성으로 성능저하 발생
+    - 멀티프로세서의 흐름 구현의 어려움
+    - 프로세서간 통신이 필요한 경우 구현이 복잡
+    - <img src='./images/멀티프로세서비유.png' width=500>
+- IO 멀티 플렉싱 
+    - 하나의 프로세서로 다수의 클라이언트에게 서비스를 제공한다.
+    - 하나의 프로세서가 여러개의 소켓을 핸들링해야 한다.
+    - <img src='./images/IO멀티플렉싱비유.png' width=500>
+
+#### IO 멀티 플렉싱
+- fd_set 구조체
+    - 파일 디스크립터 집합을 관리하는 자료구조(비트마스크 형태)
+    - 최대 FD_SETSIZE 개수만큼 파일 디스크립터를 담을 수 있음 (보통 1024)
+    - select()에 어떤 fd들을 감시할지 알려주고,
+    - select()가 반환한 뒤에는 어떤 fd가 이벤트가 발생했는지 확인할 때 사용
+    - 주요 매크로 함수들
+
+        |함수/매크로|역할|
+        |:--:|:--:|
+        |FD_ZERO(fd_set *set)|집합 초기화 (빈 집합으로 만듦)|
+        |FD_SET(int fd, fd_set *set)|특정 fd를 집합에 추가|
+        |FD_CLR(int fd, fd_set *set)|특정 fd를 집합에서 제거|
+        |FD_ISSET(int fd, fd_set *set)|특정 fd가 집합에 포함되어 있는지(이벤트 발생 여부 확인)|
+
+
+- select()함수
+    - 여러 개의 파일 디스크립터(소켓, 파일 등)를 한 번에 감시해서,
+    - 읽기/쓰기/예외 상황이 발생한 디스크립터를 알려줍니다.
+    ```c
+    #include <sys/select.h>
+
+    int select(int nfds,
+            fd_set *readfds,
+            fd_set *writefds,
+            fd_set *exceptfds,
+            struct timeval *timeout);
+    ```
+    |매개변수|설명|
+    |:--:|:--:|
+    |nfds|감시할 파일 디스크립터 중 최대값 + 1|
+    |readfds|읽기 가능 여부를 감시할 fd 집합 (읽기 이벤트)|
+    |writefds|쓰기 가능 여부를 감시할 fd 집합 (쓰기 이벤트)|
+    |exceptfds|예외 조건(에러 등)을 감시할 fd 집합|
+    |timeout|타임아웃 값<br/>NULL: 무한 대기<br/>0으로 설정하면 논블로킹 호출(즉시 리턴)<br/>특정 시간 설정 가능|
+
+    |반환 값|
+    |:--:|
+    |이벤트가 발생한 fd의 개수 (0 이상)|
+    |타임아웃에 도달하면 0 반환|
+    |오류 발생 시 -1 반환|
+
+- select() 시스템 호출을 이용해서 표준 입력(파일 디스크립터 0)을 감시하고, 5초 동안 입력이 없으면 "time-out"을 출력
+    - 표준 입력(STDIN, 키보드 입력)을 감시
+    - 입력이 들어오면 즉시 읽고 출력
+    - 아무 입력이 없으면 5초 뒤 "time-out" 출력
+    - 오류가 발생하면 종료
+
+
+    ```c
+
+    #include <stdio.h>
+    #include <unistd.h>
+    #include <sys/time.h>
+    #include <sys/select.h>
+
+    #define BUF_SIZE 30
+    int main()
+    {
+            fd_set reads, temps;  //temps: select() 호출에 사용될 임시 복사본 (왜냐하면 select()는 이 값을 변경함)
+            int result, str_len;
+            char buf[BUF_SIZE];
+            struct timeval timeout;
+
+            FD_ZERO(&reads);
+            FD_SET(0, &reads);   // 0번 FD = stdin
+
+            while(1)
+            {
+                    temps = reads;
+                    timeout.tv_sec=5;
+                    timeout.tv_usec =0;
+                    result = select(1, &temps, 0,0,&timeout);
+
+
+                    if(result == -1)
+                    {
+                            puts("select() error");
+                            break;
+                    }
+                    else if (result == 0) puts("time-out");
+                    else
+                    {
+                            if(FD_ISSET(0, &temps))
+                            {
+                                    str_len = read(0, buf, BUF_SIZE);
+                                    buf[str_len] = '\0';
+                                    printf("message from consol: %s", buf);
+                            }
+                    }
+            }
+            return 0;
+    }
+
+    ```
+    - <img src='./images/select와 표준입력.png' width=500>
+    - <img src='./images/표준입력도 fd이다..png' width=500>
+
+-  select()를 이용한 간단한 에코 서버 , 클라이언트
+    - 서버
+    ```c
+    
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <arpa/inet.h>
+    #include <sys/select.h>
+    #include <unistd.h>
+    #include <sys/time.h>
+    #include <sys/socket.h>
+
+    #define BUF_SIZE 100
+
+    void error_handling(char *buf);
+
+    int main(int argc, char* argv[])
+    {
+            int serv_sock, clnt_sock;
+            struct sockaddr_in serv_adr, clnt_adr;
+            struct timeval timeout;
+            fd_set reads, cpy_reads;
+
+            socklen_t adr_sz;
+            int fd_max, str_len, fd_num , i;
+            char buf[BUF_SIZE];
+
+            if (argc !=2)
+            {
+                    printf("Usage: %s <port> \n" , argv[0]);
+                    exit(1);
+            }
+
+            serv_sock = socket(PF_INET, SOCK_STREAM, 0);
+            memset(&serv_adr, 0, sizeof(serv_adr));
+            serv_adr.sin_family = AF_INET;
+            serv_adr.sin_addr.s_addr = htonl(INADDR_ANY);
+            serv_adr.sin_port = htons(atoi(argv[1]));
+
+            if (bind(serv_sock, (struct sockaddr*) &serv_adr, sizeof(serv_adr)) == -1)
+            {
+                    error_handling("bind() error");
+            }
+            if (listen(serv_sock, 5) == -1 ) error_handling("listen() error");
+
+            FD_ZERO(&reads);
+            FD_SET(serv_sock, &reads);
+            fd_max = serv_sock;
+
+            while(1)
+            {
+                    cpy_reads =reads;
+                    timeout.tv_sec =5;
+                    timeout.tv_usec=5000;
+
+                    if ((fd_num = select(fd_max +1 , &cpy_reads, 0, 0, &timeout))== -1) break;
+                    if (fd_num =0 ) continue;
+                    for (i=0 ; i<fd_max +1 ; i++)
+                    {
+                            if(FD_ISSET(i, &cpy_reads))
+                            {
+                                    if(i == serv_sock)
+                                    //i번 FD가 서버 소켓이라면 ⇒ 새로운 클라이언트가 접속 요청한 것
+                                    //이때는 accept() 호출해서 연결을 수락해야 합니다.
+                                    {
+                                            adr_sz = sizeof(clnt_adr);
+                                            clnt_sock = accept(serv_sock, (struct sockaddr*)&clnt_adr, &adr_sz);
+                                            FD_SET(clnt_sock, &reads);
+                                            if (fd_max < clnt_sock)
+                                            {
+
+                                                    fd_max = clnt_sock;
+                                            }
+                                            printf("connected client :%d \n" , clnt_sock);
+
+                                    }
+                                    else
+                                    {       //i번 FD가 클라이언트 소켓일 때 (서버 소켓이 아님)
+                                            str_len = read(i, buf, BUF_SIZE);
+                                            if(str_len ==0 )
+                                            {
+                                                    FD_CLR(i, &reads);
+                                                    close(i);
+                                                    printf("closed client : %d\n", i);
+                                            }
+                                            else
+                                            {       // 에코 처리
+                                                    write( i,buf, str_len);
+                                            }
+                                    }
+
+                            }
+                    }
+
+            }
+            close(serv_sock);
+            return 0;
+    }
+
+
+    void error_handling(char* buf)
+    {
+
+            fputs(buf, stderr);
+            fputc('\n', stderr);
+            exit(1);
+    }
+
+    ```
+    - 클라이언트
+    ```c
+    
+    #include <stdio.h>
+    #include <unistd.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <arpa/inet.h>
+    #include <sys/socket.h>
+
+
+    #define BUF_SIZE 1024
+
+    void error_handling(char* message);
+
+    int main(int argc, char** argv)
+    {
+            int sock;
+            char message[BUF_SIZE];
+            int str_len;
+            struct sockaddr_in serv_adr;
+
+            if( argc !=3)
+            {
+                    printf("Usage : %s <IP> <port> \n", argv[0]);
+                    exit(1);
+            }
+
+            sock = socket(PF_INET, SOCK_STREAM, 0);
+            if( sock == -1) error_handling("socket() failed");
+
+            memset(&serv_adr, 0, sizeof(serv_adr));
+            serv_adr.sin_family = AF_INET;
+            serv_adr.sin_addr.s_addr = inet_addr(argv[1]);
+            serv_adr.sin_port = htons(atoi(argv[2]));
+
+            if(connect(sock,(struct sockaddr*)  &serv_adr , sizeof(serv_adr)  ) == -1 ) error_handling("connect() failed");
+            else puts("connected...");
+
+            while(1)
+            {
+                    fputs("Input message (Q to quit):  ", stdout);
+                    fgets(message , BUF_SIZE, stdin);
+
+                    if (!strcmp(message , "q\n" ) || !strcmp(message, "Q\n")) break;
+
+                    write(sock, message, strlen(message));   //입력한 메시지를 서버에 전송
+                    str_len = read(sock, message, BUF_SIZE);   //서버로부터 받은 응답 출력 (에코 서버일 경우, 같은 메시지가 돌아옴)
+                    message[str_len] = '\0';
+                    printf("Message from server : %s ", message);
+
+            }
+            close(sock);
+            return 0;
+
+    }
+
+    void error_handling(char *message)
+    {
+            fputs(message, stderr);
+            fputc('\n', stderr);
+            exit(1);
+
+    }
+
+
+    ```
+    - <img src='./images/stdin,stdout.png' width=500>
+    - <img src='./images/클라이언트 여러명.png' width=500>
+-  VM 외부 접속 가능하게 하려면 필요한 작업
+    1. vm - edit - virtual network editor 
+    2. VMnet8 - change setting
+    3. VMnet8 - net settings
+    4. add
+        - <img src='./images/세팅.png' width=500>
+    5. 서버 컴퓨터 기준
+        - <img src='./images/서버쪽 준비.png' width=500>
+    6. 클라이언트 컴퓨터 기준
+        ```c
+        ./echo_client 서버ip 서버포트번호
+        ```
+    7. 실행확인
+        - 내가 서버일 때 
+            ```c
+            ./echo_selectsv 18080
+            ```
+            - <img src='./images/내가서버.png' width=500>
+        - 내가 클라이언트일 때
+            ```c
+            ./echo_client 서버ip 18080
+            ```
+            -<img src='./images/내가클라이언트.png' width=500>    
+        - 내가 서버이자 클라이언트일 때 + 서버에서 클라이언트가 보낸 메시지 출력
+            ```c
+           for (i=0 ; i<fd_max +1 ; i++)
+                    {
+                            if(FD_ISSET(i, &cpy_reads))
+                            {
+                                    if(i == serv_sock)
+                                    //i번 FD가 서버 소켓이라면 ⇒ 새로운 클라이언트가 접속 요청한 것
+                                    //이때는 accept() 호출해서 연결을 수락해야 합니다.
+                                    {
+                                            adr_sz = sizeof(clnt_adr);
+                                            clnt_sock = accept(serv_sock, (struct sockaddr*)&clnt_adr, &adr_sz);
+                                            FD_SET(clnt_sock, &reads);
+                                            if (fd_max < clnt_sock)
+                                            {
+
+                                                    fd_max = clnt_sock;
+                                            }
+                                            printf("connected client :%d \n" , clnt_sock);
+
+                                    }
+                                    else
+                                    {       //i번 FD가 클라이언트 소켓일 때 (서버 소켓이 아님)
+                                            str_len = read(i, buf, BUF_SIZE);
+                                            if(str_len ==0 )
+                                            {
+                                                    FD_CLR(i, &reads);
+                                                    close(i);
+                                                    printf("closed client : %d\n", i);
+                                            }
+                                            else
+                                            {       
+                                                    printf("Message from client %d: %s", i, buf); // 메시지 출력              
+                                                    // 에코 처리
+                                                    write( i,buf, str_len);
+                                            }
+                                    }
+
+                            }
+                    }
+            ```
+            - <img src='./images/서버에서도 메시지 보기.png' width=500>
+
+- 서버 프로그램을 실행할 때 갑자기 bind() error가 나는 이유는 대부분 포트가 아직 "사용 중"이기 때문입니다.
+    - 원인: 이전 서버가 포트를 완전히 반환하지 않음
+    - 리눅스에서는 서버를 강제로 종료했을 경우(예: Ctrl+C), 바인딩된 포트가 즉시 해제되지 않고 잠시 동안 TIME_WAIT 상태로 남아 있게 됩니다. 그래서 다시 같은 포트(18080)로 bind() 하려 하면 에러가 납니다.
+    - 이건 리눅스의 TCP 포트 보호 메커니즘 때문에 발생하는 일반적인 현상입니다.
+
