@@ -1882,7 +1882,7 @@ void main()
     - 하나의 프로세서가 여러개의 소켓을 핸들링해야 한다.
     - <img src='./images/IO멀티플렉싱비유.png' width=500>
 
-#### IO 멀티 플렉싱
+#### SELECT
 - fd_set 구조체
     - 파일 디스크립터 집합을 관리하는 자료구조(비트마스크 형태)
     - 최대 FD_SETSIZE 개수만큼 파일 디스크립터를 담을 수 있음 (보통 1024)
@@ -2159,7 +2159,7 @@ void main()
     ```
     - <img src='./images/stdin,stdout.png' width=500>
     - <img src='./images/클라이언트 여러명.png' width=500>
--  VM 외부 접속 가능하게 하려면 필요한 작업
+- **VM 외부 접속 가능하게 하려면 필요한 작업**
     1. vm - edit - virtual network editor 
     2. VMnet8 - change setting
     3. VMnet8 - net settings
@@ -2230,3 +2230,773 @@ void main()
     - 리눅스에서는 서버를 강제로 종료했을 경우(예: Ctrl+C), 바인딩된 포트가 즉시 해제되지 않고 잠시 동안 TIME_WAIT 상태로 남아 있게 됩니다. 그래서 다시 같은 포트(18080)로 bind() 하려 하면 에러가 납니다.
     - 이건 리눅스의 TCP 포트 보호 메커니즘 때문에 발생하는 일반적인 현상입니다.
 
+## 103일차(7/4) [./소켓/chapter5]
+### IO 멀티 플렉싱
+#### poll
+- <img src='./images/poll과 select비교.png' width=500>
+
+- struct pollfd 구조체
+```c
+struct pollfd {
+    int   fd;         // 감시할 파일 디스크립터
+    short events;     // 감시할 이벤트 (입력/출력 등)
+    short revents;    // 실제 발생한 이벤트 (poll() 호출 후 설정됨)
+};
+```
+- poll()함수
+    - 함수정의
+    ```c
+    #include <poll.h>
+
+    int poll(struct pollfd fds[], nfds_t nfds, int timeout);
+    ``` 
+    |매개변수|설명|
+    |:--:|:--:|
+    |fds[]|감시할 파일 디스크립터의 배열 (struct pollfd 구조체 배열)|
+    |nfds|fds[] 배열의 길이 (파일 디스크립터 수)|
+    |timeout|대기 시간 (밀리초 단위)<br> 0: 즉시 반환 (non-blocking)<br> -1: 무한 대기 (blocking)<br>>0: 지정된 밀리초만큼 대기|
+    
+    - 주요 이벤트 플래그 (events, revents에서 사용)
+
+    |플래그|설명|
+    |:--:|:--:|
+    |POLLIN|읽을 수 있음 (입력 가능)|
+    |POLLOUT|쓸 수 있음 (출력 가능)|
+    |POLLERR|에러 발생|
+    |POLLHUP|연결이 끊김 (hang up)|
+    |POLLNVAL|잘못된 파일 디스크립터|
+    
+    - 반환값
+    |반환값|의미|
+    |:--:|:--:|
+    |>0|이벤트가 발생한 파일 디스크립터 개수|
+    |0|타임아웃 (이벤트 없음)|
+    |-1|에러 발생 (errno로 확인)|
+
+- poll() + 키보드(표준 입력, fd=0)의 입력
+    ```c
+    #include <stdio.h>
+    #include <unistd.h>
+    #include <poll.h>
+
+    int main()
+    {
+
+            struct pollfd pfd;
+            pfd.fd = STDIN_FILENO;  //0 표준입력
+            pfd.events = POLLIN;
+
+            printf("wait 5 seconds ...\n");
+            int ret =poll(&pfd, 1, 5000);
+            if(ret == -1) perror("poll() error\n");
+            else if (ret ==0) perror("timeout\n");
+            else
+            {
+                    if (pfd.revents & POLLIN)
+                    {
+                            char buffer[100];
+                            fgets(buffer, sizeof(buffer), stdin);
+                            printf("Entered: %s\n", buffer);
+                    }
+            }
+
+            return 0;
+    }
+    ```
+    - <img src='./images/poll예제.png' width=500>
+
+- poll() 서버 , 클라이언트 통신
+    - 요점
+        - poll()은 서버 소켓과 클라이언트 소켓들의 이벤트를 감시함
+        - 서버 소켓이 읽기 가능해지면 → 새 클라이언트 연결 요청 수락(accept)
+        - 클라이언트 소켓이 읽기 가능해지면 → 데이터 읽고, 0 이하일 경우 종료 처리
+        - 클라이언트 종료 시 fd 목록에서 삭제 → 배열 뒷부분을 덮어써서 효율적으로 관리
+        - nfds는 현재 감시 중인 소켓 개수
+        
+    - 서버
+    ```c
+    #include <stdio.h>
+    #include <poll.h>
+    #include <unistd.h>
+    #include <string.h>
+    #include <stdlib.h>
+    #include <netinet/in.h>
+
+    #define MAX_CLIENTS 100
+
+    int main(int argc, char** argv)
+    {
+            int server_fd, client_fd;
+            struct sockaddr_in addr;
+            socklen_t addrlen =sizeof(addr);
+
+            struct pollfd fds[MAX_CLIENTS];
+            int nfds=1;
+
+            server_fd = socket(PF_INET, SOCK_STREAM, 0);
+            addr.sin_family = AF_INET;
+            addr.sin_addr.s_addr = INADDR_ANY;
+            addr.sin_port = htons(atoi(argv[1]));
+
+            bind(server_fd, (struct sockaddr*) &addr, sizeof(addr));
+            listen(server_fd, 5);
+
+            fds[0].fd = server_fd;
+            fds[0].events = POLLIN;
+
+            while(1)
+            {
+                    int activity = poll(fds, nfds, -1); // 이벤트 대기 (무한)
+                    if (fds[0].revents & POLLIN)  // 클라이언트가 새로 연결을 시도했을 때
+                    {
+                            client_fd = accept(server_fd, (struct sockaddr*)&addr, &addrlen);
+                            if(nfds <MAX_CLIENTS)
+                            {
+                                    fds[nfds].fd = client_fd;
+                                    fds[nfds].events = POLLIN;
+                                    nfds++;
+                            }
+                            printf("connected client : %d\n", client_fd);
+                    }
+
+                      // 기존 클라이언트들 이벤트 확인
+                    for (int i=1 ; i<nfds ; i++)
+                    {
+                            if(fds[i].revents & POLLIN)
+                            {
+                                    char buffer[1024] = {0};
+                                    int read_len = read(fds[i].fd, buffer, sizeof(buffer));
+                                    if (read_len <= 0) // 클라이언트 종료 혹은 에러 발생 시
+                                    {       int closefd = fds[i].fd;
+                                            close(closefd);
+                                            fds[i] = fds[nfds -1 ];
+                                            nfds--;
+                                            i--;
+                                            printf("closed client : %d\n", closefd);
+                                    }
+                                    else
+                                    {  // 받은 데이터 출력 및 에코
+                                            printf("client[%d] %s \n",fds[i].fd, buffer);
+                                            write(fds[i].fd , buffer, read_len);
+                                    }
+                            }
+
+                    }
+
+            }
+
+
+
+
+            return 0;
+    }
+    ```
+    - 클라이언트
+    ```c
+    #include <stdio.h>
+    #include <unistd.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <arpa/inet.h>
+    #include <sys/socket.h>
+
+
+    #define BUF_SIZE 1024
+
+    void error_handling(char* message);
+
+    int main(int argc, char** argv)
+    {
+            int sock;
+            char message[BUF_SIZE];
+            int str_len;
+            struct sockaddr_in serv_adr;
+
+            if( argc !=3)
+            {
+                    printf("Usage : %s <IP> <port> \n", argv[0]);
+                    exit(1);
+            }
+
+            sock = socket(PF_INET, SOCK_STREAM, 0);
+            if( sock == -1) error_handling("socket() failed");
+
+            memset(&serv_adr, 0, sizeof(serv_adr));
+            serv_adr.sin_family = AF_INET;
+            serv_adr.sin_addr.s_addr = inet_addr(argv[1]);
+            serv_adr.sin_port = htons(atoi(argv[2]));
+
+            if(connect(sock,(struct sockaddr*)  &serv_adr , sizeof(serv_adr)  ) == -1 ) error_handling("connect() failed");
+            else puts("connected...");
+
+            while(1)
+            {
+                    fputs("Input message (Q to quit):  ", stdout);
+                    fgets(message , BUF_SIZE, stdin);
+
+                    if (!strcmp(message , "q\n" ) || !strcmp(message, "Q\n")) break;
+
+                    write(sock, message, strlen(message));   //입력한 메시지를 서버에 전송
+                    str_len = read(sock, message, BUF_SIZE);   //서버로부터 받은 응답 출력 (에코 서버일 경우, 같은 메시지가 돌아옴)
+                    message[str_len] = '\0';
+                    printf("Message from server : %s ", message);
+
+            }
+            close(sock);
+            return 0;
+
+    }
+
+    void error_handling(char *message)
+    {
+            fputs(message, stderr);
+            fputc('\n', stderr);
+            exit(1);
+
+    }
+    ```
+    - 실행
+        - <img src='./images/poll서버와클라이언트.png' width=500>
+        - <img src='./images/c언어논리,비트연산자.png' width=500>
+        - <img src='./images/비트연산poll함수.png' width=500>
+
+#### epoll
+- select()와 poll()보다 훨씬 효율적으로 대규모 fd 감시 가능.
+- 특히 수천, 수만 개 이상의 fd 처리에 적합합니다.
+
+- 기본 사용 흐름 요약
+    1. epoll_create1()으로 epoll 인스턴스 생성
+    2. epoll_ctl()로 감시할 fd 등록
+    3. epoll_wait()으로 이벤트 대기 및 처리
+    4. 필요 시 epoll_ctl()로 fd 수정/삭제
+    5. 작업 끝나면 close()로 epoll fd 닫기
+
+- struct epoll_event
+```c
+typedef union epoll_data {
+    void *ptr;
+    int fd;
+    uint32_t u32;
+    uint64_t u64;
+} epoll_data_t;
+
+struct epoll_event {
+    uint32_t events;      // 감시할 이벤트 종류 (EPOLLIN, EPOLLOUT 등)
+    epoll_data_t data;    // 사용자 데이터 (보통 fd 저장)
+};
+
+```
+
+- 주요 함수 원형
+```c
+// 1.epoll 인스턴스 생성
+int epoll_create1(int flags);
+
+// 2. epoll 감시 대상 등록/수정/삭제
+//epfd : epoll_create 또는 epoll_create1로 생성된 epoll 인스턴스의 파일 디스크립터
+// op (operation) :epoll 감시 대상에 대한 작업 종류
+//EPOLL_CTL_ADD: fd 등록
+//EPOLL_CTL_MOD: fd 이벤트 수정
+//EPOLL_CTL_DEL: fd 삭제
+
+//fd : 감시 대상이 되는 파일 디스크립터
+//event :감시할 이벤트와 사용자 데이터를 담은 포인터. event->events에는 감시할 이벤트 플래그를 넣고, event->data에는 사용자 식별 데이터(주로 fd)를 넣음.
+//반환값: 성공 시 0, 실패 시 -1
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+
+// 3. 이벤트 대기
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
+
+```
+
+- 주요 상수 (events 플래그)
+
+|상수|의미|
+|:--:|:--:|
+|EPOLLIN|읽기 가능|
+|EPOLLOUT|쓰기 가능|
+|EPOLLERR|에러 발생|
+|EPOLLHUP|연결 종료|
+|EPOLLET|엣지 트리거 모드 설정|
+|EPOLLONESHOT|한 번만 이벤트 알림|
+
+
+- epoll을 사용해서 키보드(표준 입력, fd=0)의 입력을 5초간 대기
+    ```c
+
+    #include <stdio.h>
+    #include <unistd.h>
+    #include <sys/epoll.h>
+    #include <fcntl.h>
+
+    int main()
+    {
+            int epfd = epoll_create1(0);
+            struct epoll_event  event, events[10];
+
+            event.events =EPOLLIN;
+            event.data.fd = 0;
+
+            epoll_ctl(epfd, EPOLL_CTL_ADD, 0, &event);
+
+            printf("키보드 입력 대기중...\n");
+
+            int n = epoll_wait(epfd, events, 10, 5000);   //events 배열에 최대 10개 이벤트를 저장할 수 있습니다. 반환값 n은 발생한 이벤트 개수입니다.
+            if (n==0) printf("timeout\n");
+            else if(n>0)
+            {
+                    printf("n: %d\n", n);
+                    char buf[100];
+                    fgets(buf, sizeof(buf), stdin);
+                    printf("입력됨:%s\n ", buf);
+            }
+            close(epfd);
+            return 0;
+    }
+    ```
+    - <img src='./images/epoll예제.png' width=500>
+
+- epoll() 서버, 클라이언트
+    - 서버
+    ```c
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <unistd.h>
+    #include <sys/epoll.h>
+    #include <netinet/in.h>
+
+
+    #define MAX_EVENTS 10   //MAX_EVENTS가 10이라는 것은 “한 번에 최대 10개의 이벤트를 처리할 준비가 되어 있다”는 뜻이
+
+    int main(int argc, char* argv [])
+    {
+            int server_fd, epfd, client_fd, event_cnt;
+            struct sockaddr_in addr;
+            socklen_t addrlen = sizeof(addr);
+            struct epoll_event ev, events[MAX_EVENTS];
+
+            server_fd = socket(PF_INET, SOCK_STREAM, 0);
+            addr.sin_family = AF_INET;
+            addr.sin_addr.s_addr = INADDR_ANY;
+            addr.sin_port = htons(atoi(argv[1]));
+
+            if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr) ) == -1)
+            {
+                    perror("bind() failed");
+                    close(server_fd);
+                    exit(1);
+            }
+            if (listen(server_fd, 5) == -1)
+            {
+                    perror("listen() failed");
+                    close(server_fd);
+                    exit(1);
+            }
+
+            epfd = epoll_create1(0);
+            ev.events = EPOLLIN;
+            ev.data.fd = server_fd;
+
+            epoll_ctl(epfd, EPOLL_CTL_ADD, server_fd, &ev);
+
+            while(1)
+            {
+
+                    event_cnt = epoll_wait(epfd, events , MAX_EVENTS, 5000);
+                    if (event_cnt == -1)
+                    {
+                            perror("epoll_wait() failed");
+                            break;
+                    }
+                    for (int i= 0 ; i<event_cnt ; i++)
+                    {
+                            if(events[i].data.fd == server_fd)
+                            {
+                                    client_fd = accept(server_fd, (struct sockaddr*)&addr ,&addrlen);
+                                    ev.events = EPOLLIN;
+                                    ev.data.fd = client_fd;
+                                    epoll_ctl(epfd, EPOLL_CTL_ADD, client_fd, &ev);
+                                    printf("connected client : %d\n", client_fd);
+                            }
+                            else
+                            {
+                                    char buffer[1024] = {0};
+                                    int read_len = read (events[i].data.fd, buffer, sizeof(buffer));
+                                    if (read_len <=0)
+                                    {
+                                            epoll_ctl(epfd, EPOLL_CTL_DEL, events[i].data.fd, NULL);
+                                            close(events[i].data.fd);
+                                            printf("closed client:%d\n", events[i].data.fd);
+                                    }
+
+                                    else
+                                    {
+                                            printf("client [%d]  %s \n", events[i].data.fd, buffer);
+                                            write(events[i].data.fd, buffer, read_len);
+                                    }
+                            }
+                    }
+            }
+            close(server_fd);
+            close(epfd);
+            return 0;
+    }
+
+    ```
+    - 클라이언트
+    ```c
+        #include <stdio.h>
+        #include <unistd.h>
+        #include <stdlib.h>
+        #include <string.h>
+        #include <arpa/inet.h>
+        #include <sys/socket.h>
+
+
+        #define BUF_SIZE 1024 
+
+        void error_handling(char* message);
+
+        int main(int argc, char** argv)
+        {
+                int sock;
+                char message[BUF_SIZE];
+                int str_len;
+                struct sockaddr_in serv_adr;
+
+                if( argc !=3)
+                {
+                        printf("Usage : %s <IP> <port> \n", argv[0]);
+                        exit(1);
+                }
+
+                sock = socket(PF_INET, SOCK_STREAM, 0);
+                if( sock == -1) error_handling("socket() failed");
+
+                memset(&serv_adr, 0, sizeof(serv_adr));
+                serv_adr.sin_family = AF_INET;
+                serv_adr.sin_addr.s_addr = inet_addr(argv[1]);
+                serv_adr.sin_port = htons(atoi(argv[2]));
+
+                if(connect(sock,(struct sockaddr*)  &serv_adr , sizeof(serv_adr)  ) == -1 ) error_handling("connect() failed");
+                else puts("connected...");
+
+                while(1)
+                {
+                        fputs("Input message (Q to quit):  ", stdout);
+                        fgets(message , BUF_SIZE, stdin);
+
+                        if (!strcmp(message , "q\n" ) || !strcmp(message, "Q\n")) break;
+
+                        write(sock, message, strlen(message));   //입력한 메시지를 서버에 전송
+                        str_len = read(sock, message, BUF_SIZE);   //서버로부터 받은 응답 출력 (에코 서버일 경우, 같은 메시지가 돌아옴)
+                        message[str_len] = '\0';
+                        printf("Message from server : %s ", message);
+
+                }
+                close(sock);
+                return 0;
+
+        }
+
+        void error_handling(char *message)
+        {
+                fputs(message, stderr);
+                fputc('\n', stderr);
+                exit(1);
+
+        }
+    ```
+    - 실행
+        - <img src='./images/epoll 서버클라이언트.png' width=500>
+
+### 멀티캐스트, 브로드캐스트
+- 브로드캐스트(Broadcast)와 멀티캐스트(Multicast)는 둘 다 "하나의 송신자가 여러 수신자에게 데이터를 보내는" 통신 방식이지만, 작동 방식과 사용 목적에 있어 중요한 차이점이 있습니다.
+- <img src='./images/멀티캐스트와브로드캐스트비교.png' width=500>
+
+- 함수
+```c
+//매개변수 설명
+//sockfd - 설정할 소켓의 파일 디스크립터 (socket descriptor)
+// level - 옵션이 적용될 프로토콜 레벨 , 예: SOL_SOCKET (소켓 레벨 옵션), IPPROTO_TCP (TCP 레벨 옵션) 등
+//optname - 설정할 옵션 이름 , 예: SO_REUSEADDR, SO_KEEPALIVE, TCP_NODELAY 등
+//optval - 옵션 값을 가리키는 포인터, 옵션에 따라 다름 (예: int, struct timeval, char* 등)
+//optlen - optval이 가리키는 값의 크기 (바이트 단위) , 예: sizeof(int), sizeof(struct timeval) 등
+int setsockopt(int sockfd, int level, int optname,
+               const void *optval, socklen_t optlen);
+
+
+//매개변수 설명
+//sockfd -데이터를 보낼 소켓의 파일 디스크립터.
+//buf - 보낼 데이터가 저장된 버퍼의 포인터.
+//len - 보낼 데이터의 길이 (바이트 단위).
+//flags - 전송 동작을 조절하는 플래그. 보통 0을 쓰지만, MSG_DONTWAIT 같은 옵션도 있음.
+//dest_addr - 데이터를 받을 대상 주소를 담고 있는 구조체 포인터 (struct sockaddr *).
+//addrlen - dest_addr 구조체의 크기.
+
+ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
+               const struct sockaddr *dest_addr, socklen_t addrlen);
+```
+- <img src='./images/udp통신함수.png' width=500>
+
+#### 멀티캐스트 
+1. 개념
+- 멀티캐스트는 네트워크 상에서 특정 그룹에 가입한 호스트들만 데이터를 받을 수 있도록 전송하는 방식입니다.
+- IP 멀티캐스트는 UDP 프로토콜을 기반으로 동작
+- 수신자는 특정 멀티캐스트 그룹 주소에 가입해야 함
+- 송신자는 한 번만 데이터를 보내고, 네트워크가 그룹에 속한 수신자들에게 복사해서 전달
+- IPv4 주소 범위  224.0.0.0 ~ 239.255.255.255
+- 멀티캐스트 활용 예시 : - IPTV, 화상회의 시스템,멀티플레이어 게임, IoT 장치 제어
+
+2. 멀티캐스트 TTL
+- TTL은 패킷 생존 거리를 제한하는 값
+- 멀티캐스트 전파 범위 제어에 중요
+- TTL이 너무 크면 불필요하게 멀리 전파되어 네트워크 부하 초래 가능
+- 반대로 TTL이 너무 작으면 목표 수신자에게 도달하지 못할 수도 있음
+- TTL 값에 따라 멀티캐스트가 로컬/지역/광역/글로벌까지 전파될 수 있음
+
+
+3. 멀티캐스트 서버, 클라이언트
+- 클라이언트(Client) - 멀티캐스트 IP 주소와 포트 번호, 그리고 보낼 메시지를 인자로 받아, 해당 멀티캐스트 그룹으로 메시지를 전송
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+
+#define TTL 64
+
+void error_handling(char* message);
+
+int main(int argc, char* argv[])
+{
+        int send_sock;
+        struct sockaddr_in mul_addr;
+        int time_live =TTL;
+
+        if(argc !=4)
+        {
+                printf("Usage:%s <GroupIP> <Port> <Message> \n", argv[0]);
+                exit(1);
+        }
+        send_sock = socket(PF_INET, SOCK_DGRAM,0);
+        if(send_sock == -1) error_handling("socket() failed");
+
+        memset(&mul_addr, 0, sizeof(mul_addr));
+        mul_addr.sin_family = AF_INET;
+        mul_addr.sin_addr.s_addr = inet_addr(argv[1]);
+        mul_addr.sin_port = htons(atoi(argv[2]));
+
+        if (setsockopt(send_sock, IPPROTO_IP, IP_MULTICAST_TTL, (void*)&time_live, sizeof(time_live))==-1) error_handling("setsocket() TTL error");
+        if (sendto(send_sock, argv[3], strlen(argv[3]), 0, (struct sockaddr*)&mul_addr, sizeof(mul_addr))== -1) error_handling("sendto() error");
+        printf("Multicast message sent to %s:%s \n", argv[1], argv[2]);
+        close(send_sock);
+        return 0;
+}
+
+void error_handling(char * message)
+{
+
+        perror(message);
+        exit(1);
+}
+
+```
+- 서버 - 멀티캐스트 그룹에 가입(join) 합니다. 특정 포트로 들어오는 UDP 멀티캐스트 메시지를 수신합니다. 메시지가 올 때까지 계속 기다립니다 (while(1)). 수신된 데이터를 출력합니다.
+
+``` c
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <string.h>
+#include <sys/socket.h>
+
+
+#define BUF_SIZE 1024
+
+void error_handling(char* message);
+
+int main(int argc, char** argv)
+{
+
+        int recv_sock;
+        struct sockaddr_in recv_addr;
+        struct ip_mreq join_addr;
+        char buf[BUF_SIZE];
+
+        if (argc !=3)
+        {
+                printf("Usage: %s <GroupIp> <Port>\n", argv[0]);
+                exit(1);
+        }
+
+        recv_sock = socket(PF_INET, SOCK_DGRAM, 0);
+        if (recv_sock == -1) error_handling("socket() failed");
+
+        int reuse =1;
+        if (setsockopt(recv_sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse))<0) error_handling("setsockopt(SO_REUSEADDR) error");
+
+        memset(&recv_addr, 0, sizeof(recv_addr));
+        recv_addr.sin_family = AF_INET;
+        recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        recv_addr.sin_port = htons(atoi(argv[2]));
+
+        if(bind(recv_sock, (struct sockaddr*)&recv_addr, sizeof(recv_addr))==-1) error_handling("bind() error");
+
+        join_addr.imr_multiaddr.s_addr = inet_addr(argv[1]);
+        join_addr.imr_interface.s_addr= htonl(INADDR_ANY);
+
+        if(setsockopt(recv_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void*)&join_addr,sizeof(join_addr ))==-1) error_handling("setsockopt() Group join error");
+
+        printf("Joined multicast group %s on port %s. Waiting for message ...\n", argv[1], argv[2]);
+
+        while(1)
+        {
+                int str_len = recvfrom (recv_sock, buf, BUF_SIZE-1, 0, NULL, 0);
+                if (str_len <0) break;
+                buf[str_len]=0;
+                printf("Received multicast message: %s\n", buf);
+        }
+
+        close(recv_sock);
+        return 0;
+}
+
+void error_handling(char* message)
+{
+        perror(message);
+        exit(1);
+}  
+```
+- <img src='./images/멀티캐스트.png' width=500>
+
+
+#### 브로드캐스트
+1. 개념
+- 브로드캐스트(Broadcast)는 네트워크 상의 모든 호스트(기기)에게 데이터를 전송하는 방식입니다.
+- 같은 서브넷(로컬 네트워크)에 있는 모든 장치가 패킷을 수신합니다.
+- IP 브로드캐스트 주소: 192.168.0.255, 255.255.255.255 등 (서브넷에 따라 달라짐)
+
+2. 브로드캐스트 서버, 클라이언트
+- UDP 브로드캐스트 메시지를 수신하는 서버
+```c
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <sys/socket.h>
+
+#define BUF_SIZE 100
+void error_handling(char * message);
+
+int main(int argc, char** argv)
+
+{
+        int recv_sock;
+        struct sockaddr_in recv_addr;
+        struct sockaddr_in from_addr;
+        socklen_t adr_sz;
+        char buf[BUF_SIZE];
+
+        if (argc !=2 )
+        {
+                printf("Usage: %s <port>\n", argv[0]);
+                exit(1);
+        }
+        recv_sock = socket(PF_INET, SOCK_DGRAM, 0);
+        if(recv_sock == -1) error_handling("socket() error");
+        memset(&recv_addr, 0, sizeof(recv_addr));
+        recv_addr.sin_family = AF_INET;
+        recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        recv_addr.sin_port = htons(atoi(argv[1]));
+
+
+        if(bind(recv_sock, (struct sockaddr*)&recv_addr, sizeof(recv_addr)) == -1 ) error_handling("bind() error");
+        printf("Waiting for broadcast message on port %s...\n", argv[1]);
+
+        while(1)
+        {
+                adr_sz = sizeof(from_addr);
+                int str_len = recvfrom(recv_sock, buf, BUF_SIZE-1, 0 , (struct sockaddr*) &from_addr, &adr_sz);
+                if(str_len <0 ) break;
+                buf[str_len] = 0;
+                printf("Received message from %s : %s \n", inet_ntoa(from_addr.sin_addr),buf);
+
+
+        }
+        close(recv_sock);
+        return 0;
+}
+
+void error_handling(char* message)
+{
+        perror(message);
+        exit(1);
+}
+
+
+```
+
+- 클라이언트 - 특정 멀티캐스트 그룹 주소와 포트로 메시지를 전송
+```c
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+void error_handling(char *message);
+
+int main(int argc, char** argv)
+{
+        int send_sock;
+        struct sockaddr_in broad_addr;
+        int so_brd = 1;
+
+        if(argc !=3)
+        {
+                printf("Usage: %s <Port> <Message>\n", argv[0]);
+                exit(1);
+        }
+
+        send_sock = socket(PF_INET, SOCK_DGRAM, 0);
+        if (send_sock == -1) error_handling("socket() error");
+
+        memset(&broad_addr, 0, sizeof(broad_addr));
+        broad_addr.sin_family = AF_INET;
+        broad_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
+        broad_addr.sin_port = htons(atoi(argv[1]));
+
+        if (setsockopt(send_sock, SOL_SOCKET, SO_BROADCAST, (void*) &so_brd, sizeof(so_brd)) == -1)             error_handling("setsockopt() error");
+
+        if (sendto(send_sock, argv[2], strlen(argv[2]), 0, (struct sockaddr*)&broad_addr, sizeof(broad_addr)) == -1) error_handling("sendto() error");
+        printf("Broadcast message sent : %s\n", argv[2]);
+        close(send_sock);
+        return 0;
+}
+
+
+void error_handling(char *message)
+{
+
+        perror(message);
+        exit(1);
+}
+
+```
+
+- <img src='./images/port 통신.png' width=500>
+
+- 멀티캐스트와 브로드캐스트는 네트워크에서 동작하는 방식이 다르기 때문에, 서버 두 개를 같은 IP와 포트로 동시에 실행하는 데 있어서 동작 차이가 있는 것이 정상
+- <img src='./images/매개변수다름.png' width=500>
+- <img src='./images/요청개수다름1.png' width=500>

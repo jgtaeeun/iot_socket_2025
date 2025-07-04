@@ -21,7 +21,8 @@
 
 <signal.h> signal(), SIGALRM 관련 기능
 
-
+  #include <poll.h>io멀티플렉싱의 poll 함수
+  #include <sys/epoll.h> io멀티플렉싱의 epoll 함수
 
 1. 문자열 처리
 #include <arpa/inet.h>
