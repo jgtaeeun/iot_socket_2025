@@ -3000,3 +3000,352 @@ void error_handling(char *message)
 - 멀티캐스트와 브로드캐스트는 네트워크에서 동작하는 방식이 다르기 때문에, 서버 두 개를 같은 IP와 포트로 동시에 실행하는 데 있어서 동작 차이가 있는 것이 정상
 - <img src='./images/매개변수다름.png' width=500>
 - <img src='./images/요청개수다름1.png' width=500>
+
+
+## 104일차(7/7)  [./소켓/chapter6]
+### thread
+#### thread     
+1. 정의
+- 프로세스(Process) 내에서 실행되는 작업의 최소 단위
+- 하나의 프로세스는 하나 이상의 스레드를 가질 수 있습니다.
+- 여러 스레드는 하나의 프로세스 안에서 메모리와 자원을 공유하면서 동시에 실행됩니다.
+
+2. 왜 스레드를 쓰는가?
+- 동시성 작업을 위해: 예를 들어, 게임에서 캐릭터 움직임, 배경 음악, UI 등이 각각 스레드로 동작하면 부드러운 실행이 가능해집니다.
+- 리소스 효율성: 하나의 프로세스 내에서 스레드를 여러 개 돌리면, 메모리 사용을 줄이면서도 다양한 작업을 동시에 할 수 있습니다.
+
+3. 프로세스 vs 스레드
+
+|항목|프로세스|스레드|
+|:--:|:--:|:--:|
+|독립성|독립적인 실행 단위|프로세스 내에서 실행되는 단위|
+|메모리|각각 별도 메모리 사용|메모리를 공유|
+|자원 관리|무거움 (생성, 종료, 전환 등)|가벼움 (빠른 생성 및 전환 가능)|
+|안정성|하나가 죽어도 다른 건 영향 없음|하나가 문제 생기면 전체 영향 가능|
+
+4. pthread 사용법
+- 헤더 파일
+```C
+#include <pthread.h>
+```
+
+- 주요 함수들
+
+|함수명|설명|
+|:--:|:--:|
+|pthread_create(pthread_t *thread,  const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg)|새로운 스레드를 생성함|
+|int pthread_join(pthread_t thread, void **retval);|스레드가 끝날 때까지 대기함|
+|pthread_exit()|스레드를 종료시킴|
+|pthread_detach()|스레드를 detach 모드로 설정|
+|pthread_self()|현재 실행 중인 스레드 ID 반환|
+|pthread_mutex_*()|뮤텍스 관련 함수들 (동기화용)|
+
+```C
+int pthread_create(pthread_t *thread,  const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg);
+// thread	생성된 스레드의 ID가 저장될 변수 포인터
+//attr	스레드 속성 (NULL이면 기본 속성 사용)
+//start_routine	새 스레드가 실행할 함수 포인터 (void* 반환, void* 인자)
+//arg	스레드 함수에 넘겨줄 인자 (필요 없으면 NULL)
+
+//반환값: 성공 시 0, 실패 시 오류 번호 반환
+```
+
+```C
+int  pthread_join(pthread_t thread, void **retval);
+// thread		종료를 기다릴 대상 스레드의 ID
+//retval             대상 스레드가 pthread_exit() 또는 함수 반환 시 전달한 값을 받을 포인터. 필요 없으면 NULL
+// void ** : void 포인터를 가리키는 포인터
+
+```
+5. void*는 "타입이 정해지지 않은 포인터"를 의미합니다.
+- 어떤 타입의 데이터든 가리킬 수 있는 범용 포인터입니다.
+- 하지만 직접 역참조하려면 형변환(type casting) 이 필요합니다.
+
+```c
+int x = 10;
+void* ptr = &x;  // int를 가리키지만 void*로 저장
+int y = *(int*)ptr;  // 다시 int*로 캐스팅해서 사용
+```
+- <img src='./malloc void포인터.png' width=500>
+
+6.  왜 pthread에서 void*를 쓸까?
+- 범용성(generic) *로 하나만 받는 방식으로 해결합니다. & 유연한 리턴값 처리
+- **void*는 역참조 전에 반드시 형변환이 필요합니다.**
+- 타입을 잘못 캐스팅하면 Segmentation Fault가 날 수 있어요.
+- **메모리 할당을 동반할 경우, 스레드 종료 후 free()로 해제하는 걸 잊지 마세요.**
+
+
+7. 예제
+```C
+#include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <string.h>
+#include <stdlib.h>
+
+void* thread_main(void * arg);
+int main()
+{
+        pthread_t t_id;
+        int thread_arg = 5;
+        void* thread_ret;
+
+        if (pthread_create(&t_id,NULL, thread_main, (void*)& thread_arg ) != 0 )
+        {
+                puts("pthread_create error");
+                return -1;
+        }
+
+        if (pthread_join(t_id, &thread_ret) !=0 )
+        {
+                puts("pthread_join error");
+                return -1;
+        }
+        printf("Thread return message :%s\n", (char*)thread_ret);
+        free(thread_ret);
+        return 0;
+
+
+}
+
+void * thread_main(void* arg)
+{
+        int i ;
+        int cnt = *((int*) arg);
+        char * msg = (char*) malloc (sizeof(char) * 50 );
+        strcpy (msg, "Hello I'm Thread~\n");
+
+        for (i = 0 ; i< cnt ; i++)
+        {
+                sleep(1);
+
+                puts("running thread");
+        }
+        return  (void*)msg;
+}
+
+
+```
+- <img src='./images/thread_create, thread_join.png' width=500>
+
+8. 동기화 문제(경쟁 상태, race condition)
+- 예를 들어 다음과 같은 상황이 벌어질 수 있습니다:
+- 스레드 A가 num을 읽음 → 0
+- 스레드 B도 동시에 num을 읽음 → 0
+- A가 num+1을 계산하고 저장 → 1
+- B가 num-1을 계산하고 저장 → -1 ← A의 결과가 덮여쓰기 됨
+- 이처럼 증가/감소 연산이 충돌하면, 실제로 0이 되지 않고 예상치 못한 값이 됩니다.
+
+```c
+
+#include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
+
+long long num =0;
+
+void* thread_inc(void* arg);
+void* thread_des(void* arg);
+
+int main()
+{
+        pthread_t thread_id[100];
+
+        for (int i = 0 ; i< 100 ; i++)
+        {
+                if(i %2 )
+                        pthread_create(&(thread_id[i]) , NULL, thread_inc, NULL);
+                else
+                        pthread_create(&(thread_id[i]), NULL, thread_des, NULL);
+        }
+        for (int j = 0  ; j < 100 ; j++)
+        {
+                pthread_join(thread_id[j], NULL);
+        }
+        printf("result : %lld\n", num);
+        return 0;
+
+}
+
+void* thread_inc(void* arg)
+{
+        int i;
+        for (i = 0 ; i<1000000 ;i++)
+        {
+                num+=1;
+        }
+        return NULL;
+}
+
+
+void* thread_des(void* arg)
+{
+
+        int i ;
+        for (i = 0; i<1000000 ; i++)
+        {
+                num-=1;
+        }
+        return NULL;
+}
+
+```
+- <img src='./images/동기화문제.png' width=500>
+
+9. `동기화 해결방법(1) - pthread_mutex`
+- 여러 스레드가 동시에 공유 자원에 접근하는 것을 제어해서 데이터 무결성(data integrity) 을 보장해 줍니다.
+- **pthread_mutex_lock() 후 pthread_mutex_unlock()을 항상 호출해야 합니다. 안 하면 데드락(deadlock) 발생 가능**
+
+- 주요함수
+
+|함수|설명|
+|:--:|:--:|
+|pthread_mutex_init()|뮤텍스 초기화|
+|pthread_mutex_lock()|뮤텍스 잠금 (다른 스레드가 잠근 상태면 대기)|
+|pthread_mutex_trylock()|잠금 시도 (바로 실패할 수도 있음)|
+|pthread_mutex_unlock()|뮤텍스 해제|
+|pthread_mutex_destroy()|뮤텍스 제거 (더 이상 사용하지 않을 때)|
+
+```C
+#include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
+
+long long num =0;
+pthread_mutex_t mutex;
+void* thread_inc (void* arg);
+void* thread_dec (void* arg);
+
+int main()
+{
+        pthread_t  range[100];
+
+        pthread_mutex_init(&mutex, NULL);
+
+        for (int i = 0 ; i<100 ; i++)
+        {
+                if (i%2) pthread_create(&(range[i]) , NULL, thread_inc , NULL);
+                else pthread_create(&(range[i]), NULL, thread_dec, NULL);
+        }
+
+        for (int i = 0 ; i<100 ; i++)
+                pthread_join(range[i], NULL);
+
+        printf("result : %lld \n", num);
+        pthread_mutex_destroy(&mutex);
+        return 0;
+}
+
+void* thread_inc (void* arg)
+{
+        pthread_mutex_lock(&mutex);
+        for (int j = 0 ; j<1000000 ; j++)
+                num +=1;
+        pthread_mutex_unlock(&mutex);
+        return NULL;
+}
+
+void* thread_dec(void* arg)
+{
+        pthread_mutex_lock(&mutex);
+        for (int j=0 ; j<1000000; j++)
+                num -=1;
+        pthread_mutex_unlock(&mutex);
+        return NULL;
+
+}
+
+```
+- <img src='./images/mutex후.png' width=500>
+
+10. `동기화 해결방법(2) - semaphore`
+- 운영체제와 병렬 프로그래밍에서 공유 자원의 접근을 제어하기 위해 사용되는 동기화 기법
+- 뮤텍스보다 범용적 (뮤텍스는 오직 1개만 통과 가능, 세마포어는 N개 자원 관리 가능)
+
+- 주요함수
+|함수|설명|
+|:--:|:--:|
+|sem_init()|세마포어 초기화|
+|sem_wait()|세마포어 값 감소, 0이면 대기|
+|sem_post()|세마포어 값 증가, 대기 중 스레드 깨움|
+|sem_destroy()|세마포어 제거|
+
+```C
+//매개변수	타입	설명
+//sem	sem_t*	세마포어 변수의 주소입니다.
+//pshared	int	0이면 스레드 간 공유, 0이 아니면 프로세스 간 공유입니다.
+//value	unsigned int	세마포어의 초기값 (예: 1이면 이진 세마포어)
+sem_init(sem_t *sem, int pshared, unsigned int value)
+
+
+sem_wait(sem_t *sem)
+
+
+sem_post(sem_t *sem)
+
+sem_destroy(sem_t *sem)
+```
+
+
+- 예제
+```C
+
+#include <stdio.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <semaphore.h>
+
+
+void * input_data(void * arg);
+void * sum_calc (void * arg);
+static sem_t sem_one;
+static sem_t sem_two;
+static int num;
+
+int main(int argc, char* argv[])
+{
+        pthread_t id_t1, id_t2;
+        sem_init(&sem_one, 0, 0);   // 스레드 간 공유, 초기값 0
+        sem_init(&sem_two, 0, 1);   // 스레드 간 공유, 초기값 1 ->키를 가짐
+
+        pthread_create(&id_t1, NULL, input_data, NULL);
+        pthread_create(&id_t2, NULL, sum_calc, NULL);
+
+        pthread_join(id_t1, NULL);
+        pthread_join(id_t2, NULL);
+
+        sem_destroy(&sem_one);
+        sem_destroy(&sem_two);
+        return 0;
+}
+
+
+void *input_data (void * arg)
+{
+        int i;
+        for(i=0; i<5;i++)
+        {
+                fputs("Input num :", stdout);
+                sem_wait(&sem_two);             //sem_two의 키를 sem_one으로 
+                scanf("%d", &num);              
+                sem_post(&sem_one);             //sem_one은 키가 있기에 입력을 받아 저장할 수 있다.
+        }       
+        return NULL;
+}
+
+void* sum_calc(void* arg)
+{
+        int i,  sum =0;
+        for (i=0; i<5 ; i++)
+        {
+                sem_wait(&sem_one);      //sem_one의 키를 sem_two로 
+                sum+= num;
+                sem_post(&sem_two);       //sem_two은 키가 있기에 sum계산결과를 저장할 수 있다.
+        }
+        printf("result : %d\n", sum);
+        return NULL;
+
+}
+
+```
+- <img src='./images/semaphore확인.png' width=500>
