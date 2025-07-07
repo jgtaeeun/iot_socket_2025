@@ -3349,3 +3349,370 @@ void* sum_calc(void* arg)
 
 ```
 - <img src='./images/semaphore확인.png' width=500>
+- 사용자가 직접 read()라는 함수를 정의하면 #include <unistd.h>시스템의 read()와 이름 충돌이 발생 , 인자 수나 타입이 다르면 컴파일러가 혼란스러워함 =>사용자 정의 함수 이름을 변경하거나 시스템 함수를 명확히 지정
+- <img src='./images/read.png' width=500>
+
+####  사용자 이름을 포함한 메시지를 서버로 보내고, 서버에서 받은 메시지를 실시간으로 출력
+- 서버,클라이언트 통신 - thread , mutex
+- 멀티스레드 기반 TCP 채팅 서버
+```C
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <pthread.h>
+
+#define  BUF_SIZE 100
+#define MAX_CLNT 256
+
+void * handle_clnt(void * arg);
+void send_msg(char * msg, int len);
+void error_handling(char * msg);
+
+int clnt_cnt = 0;
+int clnt_socks[MAX_CLNT];
+pthread_mutex_t mutx;
+
+int main(int argc, char** argv)
+{
+        int serv_sock, clnt_sock;
+        struct sockaddr_in serv_adr, clnt_adr;
+        int clnt_adr_sz;
+        pthread_t t_id;
+
+        if (argc !=2 )
+        {
+                printf("Usage : %s <port> \n", argv[0]);
+                exit(1);
+        }
+
+        pthread_mutex_init(&mutx , NULL);
+        serv_sock = socket(PF_INET, SOCK_STREAM, 0);
+
+        memset (&serv_adr, 0, sizeof(serv_adr));
+        serv_adr.sin_family = AF_INET;
+        serv_adr.sin_addr.s_addr = htonl(INADDR_ANY);
+        serv_adr.sin_port = htons(atoi(argv[1]));
+
+        if (bind(serv_sock, (struct sockaddr*)&serv_adr, sizeof(serv_adr))== -1) error_handling("bind() error");
+        if (listen(serv_sock, 5) == -1  ) error_handling("listen() error");
+
+        while(1)
+        {
+                clnt_adr_sz = sizeof(clnt_adr);
+                clnt_sock = accept(serv_sock, (struct sockaddr*)&clnt_adr, &clnt_adr_sz);
+
+                pthread_mutex_lock(&mutx);
+                clnt_socks[clnt_cnt++] = clnt_sock;
+                pthread_mutex_unlock(&mutx);
+
+                pthread_create(&t_id, NULL, handle_clnt, (void*)&clnt_sock );
+                pthread_detach(t_id);
+                printf("Connected client IP : %s\n", inet_ntoa(clnt_adr.sin_addr));
+        }
+        close(serv_sock);
+        return 0;
+}
+
+void* handle_clnt(void* arg)
+{
+        int clnt_sock = *((int*)arg);
+        int str_len =0, i;
+        char msg[BUF_SIZE];
+
+        while((str_len = read(clnt_sock, msg, sizeof(msg))) !=0)
+        {
+               
+                send_msg(msg, str_len);
+        }
+        pthread_mutex_lock(&mutx);
+        for (i = 0; i<clnt_cnt ; i++)
+        {
+                if(clnt_sock == clnt_socks[i])
+                {
+                        while(i++ <clnt_cnt -1)     
+                                clnt_socks[i] = clnt_socks[i+1];
+                        break;
+                }
+        }
+        clnt_cnt--;
+        pthread_mutex_unlock(&mutx);
+        close(clnt_sock);
+        return NULL;
+}
+
+void send_msg(char *msg, int len)
+{
+        int i;
+        pthread_mutex_lock(&mutx);
+        for( i= 0; i<clnt_cnt; i++)
+        {
+                write(clnt_socks[i], msg, len);        // 여기가 "모든 클라이언트에게 메시지 보내는 부분"
+
+        }
+        pthread_mutex_unlock(&mutx);
+}
+
+void error_handling(char* msg)
+{
+        fputs(msg, stderr);
+        fputc('\n', stderr);
+        exit(1);
+}
+``` 
+
+- 멀티 클라이언트 채팅 서버에 연결하는 TCP 클라이언트 프로그램
+
+```C
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <pthread.h>
+#include <arpa/inet.h>
+
+#define BUF_SIZE 100
+#define NAME_SIZE 20
+
+void * send_msg(void* arg);
+void * recv_msg (void* arg);
+
+void error_handling(char* msg);
+
+
+char name[NAME_SIZE] = "[DEFAULT]";
+char msg [BUF_SIZE];
+
+int main(int argc, char** argv)
+{
+        int sock;
+        struct sockaddr_in serv_adr;
+        pthread_t snd_thread, rcv_thread;
+        void * thread_return;
+
+        if(argc !=4 )
+        {
+                printf("Usage : %s <Ip> <Port> <Name>\n", argv[0]);
+                exit(1);
+        }
+
+        sprintf(name, "[%s]",argv[3]);
+        sock = socket(PF_INET, SOCK_STREAM, 0);
+        memset(&serv_adr, 0, sizeof(serv_adr));
+        serv_adr.sin_family= AF_INET;
+        serv_adr.sin_addr.s_addr = inet_addr(argv[1]);
+        serv_adr.sin_port = htons(atoi(argv[2]));
+
+
+        if (connect (sock, (struct sockaddr*)&serv_adr, sizeof(serv_adr)) == -1)   error_handling("connect() error");
+
+        pthread_create(&snd_thread, NULL, send_msg, (void*)&sock);
+        pthread_create(&rcv_thread, NULL, recv_msg, (void*)&sock);
+        pthread_join(snd_thread, &thread_return);
+        pthread_join(rcv_thread, &thread_return);
+        close(sock);
+        return 0;
+}
+
+
+void * send_msg(void* arg)
+{
+        int sock = *((int*)arg);
+        char name_msg [NAME_SIZE  + BUF_SIZE];
+        while(1)
+        {
+                fgets(msg, BUF_SIZE, stdin);
+                if(!strcmp(msg, "q\n") ||!strcmp(msg,"Q\n" ))
+                {
+                        close(sock); exit(0);
+                }
+
+                sprintf(name_msg , "%s %s" , name, msg);
+                write(sock, name_msg, strlen(name_msg));
+
+        }
+        return NULL;
+
+
+
+}
+
+
+
+void * recv_msg (void* arg)
+{
+        int sock = *((int*)arg);
+        char name_msg[NAME_SIZE+BUF_SIZE];
+        int str_len;
+        while(1)
+        {
+                str_len = read(sock, name_msg, (NAME_SIZE+BUF_SIZE) -1 );
+                if(str_len  == -1) return (void*)-1;
+                name_msg[str_len] = 0;
+                fputs(name_msg, stdout);
+
+        }
+        return NULL;
+
+}
+
+void error_handling(char* msg)
+{
+
+        fputs(msg, stderr);
+        fputc('\n', stderr);
+        exit(1);
+
+}
+
+
+```
+
+- <img src='./images/thread서버클라이언트에서 클라이언트대화창.png' width=500>
+
+
+
+### 코딩테스트  [./소켓/evaluation]
+#### webpage배열을 전송하는 웹서버 구현하시오
+- vm workstation의 터미널에서 설치
+- <img src='./images/1.png' width=500> 
+
+1. 개요
+
+|기능|설명|
+|:--:|:--:|
+|포트|8080|
+|HTML 페이지 응답|기본 GET/POST 요청 시|
+|이미지 응답|/game.jpg 요청 시|
+|파일 미존재 시|404 응답 전송|
+|방식|동기 처리 (한 번에 하나의 클라이언트 처리)|
+
+2. 서버코드
+
+```C
+#include <stdio.h>
+#include <stdlib.h>   // exit() 등
+#include <string.h>
+#include <unistd.h>
+#include <netinet/in.h>
+
+#define PORT 8080    // 서버가 사용할 포트 번호
+
+const char webpage [] = "HTTP/1.1 200 OK\r\n"
+                        "Server:Linux Web Server\r\n"
+                        "Content-Type : text/html; charset =UTF-8\r\n\r\n"
+                        "<!DOCTYPE html>\r\n"
+                        "<html><head><title>Panda World</title>\r\n"
+                        "<style>body {background-color:#167c38}</style></head>\r\n"
+                        "<body><center><h1>HBD RuiBao</h1><br>\r\n"
+                        "<img src=\"/game.jpg\"></center></body></html>\r\n";  // 이미지 태그 <img src="/game.jpg">가 있어서 클라이언트가 /game.jpg 요청 시 이미지를 로드하게 됨
+
+
+void send_image(int clnt_fd);
+
+int main()
+{
+        int serv_fd, clnt_fd;
+        struct sockaddr_in adr;
+        int adr_len = sizeof(adr);
+        char buffer[4096];
+
+        serv_fd = socket(PF_INET, SOCK_STREAM, 0);
+        if (serv_fd < 0)
+        {
+                perror("socket failed");
+                exit(1);
+        }
+
+        adr.sin_family = AF_INET;
+        adr.sin_addr.s_addr = INADDR_ANY;
+        adr.sin_port = htons(PORT);
+
+
+        if (bind(serv_fd, (struct sockaddr*)&adr , sizeof(adr) )== -1 )
+        {
+                perror("bind failed");
+                exit(1);
+        }
+
+        if (listen (serv_fd, 5) == -1 )
+        {
+                perror("listen failed");
+                exit(1);
+        }
+
+        printf("waitin client...");
+
+        while(1)
+        {
+                clnt_fd = accept(serv_fd, (struct sockaddr*)&adr, &adr_len);
+                if (clnt_fd <0)
+                {
+                        perror("accept failed");
+                        continue;
+                }
+                memset(buffer, 0, sizeof(buffer));
+                read(clnt_fd, buffer, sizeof(buffer)-1);       //클라이언트가 보낸 요청을 읽어 buffer에 저장
+
+                if(strncmp(buffer, "GET /game.jpg",13) == 0  )send_image(clnt_fd);                                  // 이미지 전송
+                else if (strncmp(buffer, "GET /" , 5) == 0 ) send(clnt_fd, webpage, strlen(webpage), 0);           // HTML 페이지 전송
+                else if(strncmp(buffer, "POST /" , 6 ) == 0 ) send(clnt_fd, webpage, strlen(webpage), 0);            // POST 요청도 HTML 전송
+
+
+                close(clnt_fd);
+        }
+        close(serv_fd);
+        return 0;
+}
+
+
+void send_image (int clnt_fd)
+{
+        const char* img_path = "/mnt/hgfs/img/game.jpg";
+        FILE *fp = fopen(img_path, "rb");        //지정된 경로에서 game.jpg 파일을 바이너리 모드로 열기
+        if (!fp)
+        {
+                const char* notfound = "HTTP/1.1 404 Not Found\r\nContent-Type:text/plain\r\nFile not found\r\n\r\n";
+                send(clnt_fd, notfound, strlen(notfound), 0);
+                return;
+
+        }
+        const char* header ="HTTP/1.1 200 OK\r\nContent-Type:image/jpeg\r\n\r\n";
+        send(clnt_fd, header, strlen(header),0);
+
+
+        char buf[4096];
+        size_t n;
+        while((n = fread(buf, 1, sizeof(buf), fp))>0)       파일을 버퍼 크기만큼 반복해서 읽고, 읽은 만큼 클라이언트에 전송
+        {
+                send(clnt_fd, buf, n, 0);
+        }
+        fclose(fp);
+} 
+
+```
+- <img src='./images/HTTP 프로토콜의 요청(Request) 메시지 형식.png' width=500>
+- <img src='./images/strncmp.png' width=500>
+
+
+3. `이미지파일 공유폴더에 넣는 방법`
+- Windows C:\img 폴더에 game.jpg이미지 넣기 
+- VMware 메뉴 vm - settings - options - shared folders - add - host path를  C:\img 로
+- 우분투 터미널에서 공유폴더 마운트 확인 
+```
+~$ ls /mnt/hgfs
+img
+```
+- c코드 내 이미지 경로 "/mnt/hgfs/img/game.jpg"로 설정
+
+4. 오류해결
+- HTML 코드가 텍스트로 그대로 보여진다  => ; 세미클론 오타  =>  Content-Type: text/html; charset=UTF-8\r\n\r\n 을 정확하게 써야 브라우저가 HTML로 해석합니다
+
+
+- <img src='./images/웹서버.jpg' width=500> 
+- <img src='./images/웹서버get이미지요청.png' width=500>
